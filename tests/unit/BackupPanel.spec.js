@@ -132,11 +132,51 @@ describe('BackupPanel', () => {
       expect(preview.text()).toContain('12 bookmarks found in this browser');
       expect(preview.text()).toContain('Restore notes, pins and screenshots for 3 bookmarks');
       expect(preview.text()).toContain('1 note will be added below the current notes');
-      expect(preview.text()).toMatch(/Recreate 2 missing bookmarks in "FavBox restore \d{4}-\d{2}-\d{2}"/);
+      expect(preview.text()).toContain('Recreate 2 missing bookmarks');
       expect(preview.text()).toContain('1 entry skipped');
       expect(wrapper.get('[data-testid="restore-data"]').element.checked).toBe(true);
       expect(wrapper.get('[data-testid="recreate-missing"]').element.checked).toBe(false);
       expect(runRestore).not.toHaveBeenCalled();
+    });
+
+    it('puts recreated bookmarks back in their original folders by default', async () => {
+      const wrapper = await mountPanel();
+      await chooseFile(wrapper);
+      const original = () => wrapper.get('[data-testid="restore-original"]');
+
+      expect(original().element.checked).toBe(true);
+      expect(original().element.disabled).toBe(true);
+      expect(wrapper.get('[data-testid="restore-preview"]').text()).toContain('Put them back in their original folders');
+
+      await wrapper.get('[data-testid="recreate-missing"]').setValue(true);
+      expect(original().element.disabled).toBe(false);
+      await wrapper.get('[data-testid="restore-start"]').trigger('click');
+      await flushPromises();
+
+      expect(vi.mocked(runRestore).mock.calls[0][1]).toMatchObject({ recreateMissing: true, placement: 'original' });
+    });
+
+    it('reports bookmarks put back in place and those that went to the restore folder', async () => {
+      vi.mocked(runRestore).mockResolvedValue({
+        updated: 0,
+        merged: 0,
+        created: 0,
+        recreated: 5,
+        placement: 'original',
+        fallback: 1,
+        folderTitle: 'FavBox restore 2026-09-28',
+        failed: [],
+      });
+      const wrapper = await mountPanel();
+      await chooseFile(wrapper);
+      await wrapper.get('[data-testid="recreate-missing"]').setValue(true);
+
+      await wrapper.get('[data-testid="restore-start"]').trigger('click');
+      await flushPromises();
+
+      const report = wrapper.get('[data-testid="restore-report"]').text();
+      expect(report).toContain('Put 4 bookmarks back in their original folders.');
+      expect(report).toContain('1 bookmark whose folder could not be found went to "Other bookmarks › FavBox restore 2026-09-28".');
     });
 
     it('says so when the backup has nothing new, instead of showing a disabled button', async () => {
@@ -201,19 +241,22 @@ describe('BackupPanel', () => {
         merged: 1,
         created: 1,
         recreated: 2,
+        placement: 'restoreFolder',
+        fallback: 0,
         folderTitle: 'FavBox restore 2026-09-28',
         failed: [{ title: 'Broken', url: 'https://broken.com/', reason: 'Invalid URL' }],
       });
       const wrapper = await mountPanel();
       await chooseFile(wrapper);
       await wrapper.get('[data-testid="recreate-missing"]').setValue(true);
+      await wrapper.get('[data-testid="restore-original"]').setValue(false);
 
       await wrapper.get('[data-testid="restore-start"]').trigger('click');
       await flushPromises();
 
       const [plan, options] = vi.mocked(runRestore).mock.calls[0];
       expect(plan).toEqual(prepared().plan);
-      expect(options).toMatchObject({ restoreData: true, recreateMissing: true });
+      expect(options).toMatchObject({ restoreData: true, recreateMissing: true, placement: 'restoreFolder' });
       expect(options.folderTitle).toMatch(/^FavBox restore \d{4}-\d{2}-\d{2}$/);
       const report = wrapper.get('[data-testid="restore-report"]').text();
       expect(report).toContain('Restored data for 3 bookmarks (1 note merged).');
@@ -243,12 +286,15 @@ describe('BackupPanel', () => {
       expect(() => structuredClone(plan)).not.toThrow();
     });
 
-    it('tells where recreated bookmarks go', async () => {
+    it('tells where recreated bookmarks go when not put back in place', async () => {
       const wrapper = await mountPanel();
-
       await chooseFile(wrapper);
+      await wrapper.get('[data-testid="recreate-missing"]').setValue(true);
 
-      expect(wrapper.get('[data-testid="restore-preview"]').text()).toContain('Recreated bookmarks go to "Other bookmarks" and sync to all your devices.');
+      await wrapper.get('[data-testid="restore-original"]').setValue(false);
+
+      expect(wrapper.get('[data-testid="restore-preview"]').text())
+        .toMatch(/They go to "Other bookmarks › FavBox restore \d{4}-\d{2}-\d{2}"\./);
     });
 
     it('goes back to the start after cancelling', async () => {

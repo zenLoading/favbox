@@ -51,19 +51,22 @@ export async function prepareRestore(file, limits = LIMITS) {
  * @param {object} [options]
  * @param {boolean} [options.restoreData] - Restore notes, pins and screenshots.
  * @param {boolean} [options.recreateMissing] - Recreate missing bookmarks.
- * @param {string} options.folderTitle - Folder for recreated bookmarks.
+ * @param {'original'|'restoreFolder'} [options.placement] - Where recreated bookmarks go.
+ * @param {string} options.folderTitle - Restore folder, used when placement is 'restoreFolder'
+ *   or a bookmark's original root folder cannot be found.
  * @param {(progress: {done: number, total: number}) => void} [options.onProgress]
  * @returns {Promise<{updated: number, merged: number, created: number, recreated: number,
- *   folderTitle: string|null, failed: Array<object>}>}
+ *   placement: string, fallback: number, folderTitle: string|null, failed: Array<object>}>}
+ *   folderTitle is set only when the restore folder was used.
  */
 export async function runRestore(plan, {
-  restoreData = true, recreateMissing = false, folderTitle, onProgress,
+  restoreData = true, recreateMissing = false, placement = 'original', folderTitle, onProgress,
 } = {}) {
   const updates = restoreData ? plan.updates : [];
   const creates = recreateMissing ? plan.creates : [];
   const total = updates.length + creates.length;
   const report = {
-    updated: 0, merged: 0, created: 0, recreated: 0, folderTitle: null, failed: [],
+    updated: 0, merged: 0, created: 0, recreated: 0, placement, fallback: 0, folderTitle: null, failed: [],
   };
 
   if (updates.length > 0) {
@@ -76,9 +79,14 @@ export async function runRestore(plan, {
   if (creates.length > 0) {
     const result = await applyCreates(creates, {
       folderTitle,
+      placement,
       onProgress: ({ done }) => onProgress?.({ done: updates.length + done, total }),
     });
-    Object.assign(report, { recreated: result.bookmarks, folderTitle });
+    Object.assign(report, {
+      recreated: result.bookmarks,
+      fallback: result.fallback,
+      folderTitle: result.folderId ? folderTitle : null,
+    });
     report.failed.push(...result.failed);
   }
   return report;

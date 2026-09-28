@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('webextension-polyfill', () => ({
   default: {
-    bookmarks: { get: vi.fn(), create: vi.fn() },
+    bookmarks: { get: vi.fn(), create: vi.fn(), getChildren: vi.fn() },
     storage: { session: { set: vi.fn() } },
     runtime: { sendMessage: vi.fn() },
   },
@@ -50,6 +50,10 @@ const createFakeBookmarks = () => {
       if (!nodes.has(id)) throw new Error(`Can't find bookmark for id ${id}`);
       return [{ ...nodes.get(id) }];
     },
+    getChildren: async (id) => {
+      if (!nodes.has(id)) throw new Error(`Can't find parent bookmark for id ${id}`);
+      return [...nodes.values()].filter((n) => n.parentId === id).map((n) => ({ ...n }));
+    },
     create: async ({ parentId = '2', title = '', url }) => {
       if (!nodes.has(parentId)) throw new Error('Can\'t find parent bookmark');
       const node = {
@@ -81,6 +85,7 @@ beforeEach(() => {
   fake = createFakeBookmarks();
   vi.mocked(browser.bookmarks.get).mockImplementation(fake.get);
   vi.mocked(browser.bookmarks.create).mockImplementation(fake.create);
+  vi.mocked(browser.bookmarks.getChildren).mockImplementation(fake.getChildren);
   vi.mocked(browser.storage.session.set).mockImplementation(async (items) => Object.assign(fake.session, items));
   vi.mocked(browser.runtime.sendMessage).mockResolvedValue();
   vi.stubGlobal('fetch', vi.fn());
@@ -104,6 +109,8 @@ const update = (overrides = {}) => ({
 
 const create = (overrides = {}) => ({
   folders: ['Bookmarks bar', 'Dev'],
+  path: ['Dev'],
+  target: { id: '1', title: 'Bookmarks bar' },
   title: 'Gone 🏷 #rust',
   url: 'https://gone.com/',
   dateAdded: 1600000000000,
@@ -402,5 +409,79 @@ describe('applyCreates', () => {
     await applyCreates([create(), create({ url: 'https://x.com/' })], { folderTitle: 'R', onProgress });
 
     expect(onProgress).toHaveBeenLastCalledWith({ done: 2, total: 2 });
+  });
+});
+
+describe('applyCreates in the original location', () => {
+  const nodesTitled = (title) => [...fake.nodes.values()].filter((n) => n.title === title);
+  const original = { folderTitle: 'R', placement: 'original' };
+
+  it('puts bookmarks back into their existing folders without a restore folder', async () => {
+    fake.nodes.set('20', { id: '20', parentId: '1', title: 'Dev' });
+
+    const result = await applyCreates([
+      create(),
+      create({ title: 'Second', url: 'https://second.com/' }),
+      create({
+        path: [], target: { id: '2', title: 'Other bookmarks' }, title: 'Third', url: 'https://third.com/',
+      }),
+    ], original);
+
+    expect(nodesTitled('Gone 🏷 #rust')[0].parentId).toBe('20');
+    expect(nodesTitled('Second')[0].parentId).toBe('20');
+    expect(nodesTitled('Third')[0].parentId).toBe('2');
+    expect(nodesTitled('Dev')).toHaveLength(1);
+    expect(nodesTitled('R')).toEqual([]);
+    expect(result).toEqual({
+      folderId: null, folders: 0, bookmarks: 3, fallback: 0, failed: [],
+    });
+  });
+
+  it('creates missing folders along the original path once', async () => {
+    const result = await applyCreates([
+      create({ path: ['Dev', 'JS'] }),
+      create({ path: ['Dev', 'JS'], title: 'Second', url: 'https://second.com/' }),
+    ], original);
+
+    const [dev] = nodesTitled('Dev');
+    const [js] = nodesTitled('JS');
+    expect(dev.parentId).toBe('1');
+    expect(js.parentId).toBe(dev.id);
+    expect(nodesTitled('Second')[0].parentId).toBe(js.id);
+    expect(result.folders).toBe(2);
+  });
+
+  it('stores rows with the folder they were put into', async () => {
+    await applyCreates([
+      create({ path: [], target: { id: '2', title: 'Other bookmarks' } }),
+    ], original);
+
+    expect([...mocks.rows.values()].find((r) => r.url === 'https://gone.com/'))
+      .toMatchObject({ folderId: '2', folderName: 'Other bookmarks' });
+  });
+
+  it('falls back to a restore folder for bookmarks whose root cannot be found', async () => {
+    const result = await applyCreates([
+      create({ target: null, folders: ['Unknown root', 'Dev'], title: 'Lost' }),
+      create({ title: 'Placed', url: 'https://placed.com/' }),
+    ], original);
+
+    const [restoreFolder] = nodesTitled('R');
+    expect(restoreFolder.parentId).toBe('2');
+    const [unknownRoot] = nodesTitled('Unknown root');
+    expect(unknownRoot.parentId).toBe(restoreFolder.id);
+    expect(nodesTitled('Placed')[0].parentId).not.toBe(restoreFolder.id);
+    expect(result).toMatchObject({ folderId: restoreFolder.id, fallback: 1, bookmarks: 2 });
+  });
+
+  it('records a bookmark whose original folder was removed meanwhile and continues', async () => {
+    const result = await applyCreates([
+      create({ target: { id: '404', title: 'Gone root' }, title: 'Orphan' }),
+      create({ title: 'Placed', url: 'https://placed.com/' }),
+    ], original);
+
+    expect(result.failed).toEqual([{ title: 'Orphan', url: 'https://gone.com/', reason: expect.any(String) }]);
+    expect(result.bookmarks).toBe(1);
+    expect(fake.session.nativeImport).toBe(false);
   });
 });

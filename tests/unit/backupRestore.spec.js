@@ -100,7 +100,7 @@ describe('runRestore', () => {
     vi.mocked(applyCreates).mockImplementation(async (creates, { onProgress }) => {
       creates.forEach((_, i) => onProgress({ done: i + 1, total: creates.length }));
       return {
-        folderId: '99', folders: 2, bookmarks: 1, failed: [],
+        folderId: '99', folders: 2, bookmarks: 1, fallback: 0, failed: [],
       };
     });
   });
@@ -111,16 +111,48 @@ describe('runRestore', () => {
     expect(applyDataUpdates).toHaveBeenCalledWith(plan.updates, expect.any(Object));
     expect(applyCreates).not.toHaveBeenCalled();
     expect(report).toEqual({
-      updated: 1, merged: 1, created: 0, recreated: 0, folderTitle: null, failed: [{ title: 'X', url: 'https://x.com/', reason: 'gone' }],
+      updated: 1,
+      merged: 1,
+      created: 0,
+      recreated: 0,
+      placement: 'original',
+      fallback: 0,
+      folderTitle: null,
+      failed: [{ title: 'X', url: 'https://x.com/', reason: 'gone' }],
     });
   });
 
-  it('recreates missing bookmarks when asked', async () => {
+  it('recreates missing bookmarks in their original folders by default', async () => {
+    vi.mocked(applyCreates).mockResolvedValue({
+      folderId: null, folders: 0, bookmarks: 1, fallback: 0, failed: [],
+    });
+
     const report = await runRestore(plan, { restoreData: false, recreateMissing: true, folderTitle: 'R' });
 
     expect(applyDataUpdates).not.toHaveBeenCalled();
-    expect(applyCreates).toHaveBeenCalledWith(plan.creates, expect.objectContaining({ folderTitle: 'R' }));
-    expect(report).toMatchObject({ recreated: 1, folderTitle: 'R', failed: [] });
+    expect(applyCreates).toHaveBeenCalledWith(plan.creates, expect.objectContaining({ folderTitle: 'R', placement: 'original' }));
+    expect(report).toMatchObject({
+      recreated: 1, placement: 'original', fallback: 0, folderTitle: null, failed: [],
+    });
+  });
+
+  it('names the restore folder when some bookmarks had to go there', async () => {
+    vi.mocked(applyCreates).mockResolvedValue({
+      folderId: '99', folders: 1, bookmarks: 1, fallback: 1, failed: [],
+    });
+
+    const report = await runRestore(plan, { recreateMissing: true, folderTitle: 'R' });
+
+    expect(report).toMatchObject({ fallback: 1, folderTitle: 'R' });
+  });
+
+  it('recreates into a restore folder when asked', async () => {
+    const report = await runRestore(plan, {
+      restoreData: false, recreateMissing: true, placement: 'restoreFolder', folderTitle: 'R',
+    });
+
+    expect(applyCreates).toHaveBeenCalledWith(plan.creates, expect.objectContaining({ placement: 'restoreFolder' }));
+    expect(report).toMatchObject({ recreated: 1, placement: 'restoreFolder', folderTitle: 'R' });
   });
 
   it('reports progress across both steps', async () => {

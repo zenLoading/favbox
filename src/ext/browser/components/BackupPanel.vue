@@ -147,8 +147,26 @@
               data-testid="recreate-missing"
             >
             <span>
-              {{ TEXT.recreate(summary.toCreate, folderTitle) }}
+              {{ TEXT.recreate(summary.toCreate) }}
               <span class="block text-gray-400 dark:text-neutral-500">{{ TEXT.recreateHint }}</span>
+            </span>
+          </label>
+          <label
+            for="backup-restore-original"
+            class="ml-5 flex items-start gap-2"
+            :class="recreateMissing ? 'cursor-pointer' : 'opacity-50'"
+          >
+            <input
+              id="backup-restore-original"
+              v-model="restoreToOriginal"
+              type="checkbox"
+              class="mt-0.5 size-3.5 rounded border-gray-300 text-black focus:ring-0 dark:border-neutral-700 dark:bg-neutral-900"
+              :disabled="!recreateMissing"
+              data-testid="restore-original"
+            >
+            <span>
+              {{ TEXT.restoreOriginal }}
+              <span class="block text-gray-400 dark:text-neutral-500">{{ restoreToOriginal ? TEXT.restoreOriginalHint : TEXT.restoreFolderHint(folderTitle) }}</span>
             </span>
           </label>
         </template>
@@ -287,8 +305,11 @@ const TEXT = {
   previewHeading: (date, matched) => `${date ? `Backup from ${date}. ` : ''}${plural(matched, 'bookmark')} found in this browser.`,
   restoreData: (n) => `Restore notes, pins and screenshots for ${plural(n, 'bookmark')}`,
   mergedHint: (n) => `${plural(n, 'note')} will be added below the current notes`,
-  recreate: (n, folder) => `Recreate ${plural(n, 'missing bookmark')} in "${folder}"`,
-  recreateHint: `Recreated bookmarks go to "${OTHER_BOOKMARKS}" and sync to all your devices.`,
+  recreate: (n) => `Recreate ${plural(n, 'missing bookmark')}`,
+  recreateHint: 'Recreated bookmarks sync to all your devices.',
+  restoreOriginal: 'Put them back in their original folders',
+  restoreOriginalHint: 'Folders that no longer exist are created again where they were.',
+  restoreFolderHint: (folder) => `They go to "${OTHER_BOOKMARKS} › ${folder}".`,
   skipped: (n) => `${plural(n, 'entry')} skipped (unsupported or invalid links).`,
   nothingToRestore: (n) => (n === 0
     ? 'This backup has no bookmarks to restore.'
@@ -298,6 +319,8 @@ const TEXT = {
   restoring: 'Restoring…',
   reportData: (n, merged) => `Restored data for ${plural(n, 'bookmark')}${merged ? ` (${plural(merged, 'note')} merged)` : ''}.`,
   reportRecreated: (n, folder) => `Recreated ${plural(n, 'bookmark')} in "${OTHER_BOOKMARKS} › ${folder}".`,
+  reportPutBack: (n) => `Put ${plural(n, 'bookmark')} back in their original folders.`,
+  reportFallback: (n, folder) => `${plural(n, 'bookmark')} whose folder could not be found went to "${OTHER_BOOKMARKS} › ${folder}".`,
   reportNothing: 'Nothing needed to be restored.',
   reportFailed: (n) => `${plural(n, 'item')} could not be restored:`,
   done: 'Done',
@@ -327,6 +350,7 @@ const errorMessage = ref('');
 const prepared = shallowRef(null);
 const restoreData = ref(true);
 const recreateMissing = ref(false);
+const restoreToOriginal = ref(true);
 const folderTitle = ref('');
 const progress = ref(0);
 const report = shallowRef(null);
@@ -342,13 +366,23 @@ const previewHeading = computed(() => {
 const hasSomethingToRestore = computed(() => summary.value.toUpdate > 0 || summary.value.toCreate > 0);
 const canRestore = computed(() => (restoreData.value && summary.value.toUpdate > 0)
   || (recreateMissing.value && summary.value.toCreate > 0));
+const recreatedLines = ({
+  recreated, placement, fallback, folderTitle: folder,
+}) => {
+  if (placement !== 'original') return [TEXT.reportRecreated(recreated, folder)];
+  const putBack = Math.max(0, recreated - fallback);
+  return [
+    ...(putBack > 0 ? [TEXT.reportPutBack(putBack)] : []),
+    ...(fallback > 0 ? [TEXT.reportFallback(fallback, folder)] : []),
+  ];
+};
 const reportLines = computed(() => {
   const {
     updated, merged, created, recreated, failed,
   } = report.value;
   const lines = [];
   if (updated + created > 0) lines.push(TEXT.reportData(updated + created, merged));
-  if (recreated > 0) lines.push(TEXT.reportRecreated(recreated, report.value.folderTitle));
+  if (recreated > 0) lines.push(...recreatedLines(report.value));
   if (lines.length === 0 && failed.length === 0) lines.push(TEXT.reportNothing);
   if (failed.length > 0) lines.push(TEXT.reportFailed(failed.length));
   return lines;
@@ -398,6 +432,7 @@ const handleFile = async (event) => {
     prepared.value = result;
     restoreData.value = result.plan.summary.toUpdate > 0;
     recreateMissing.value = false;
+    restoreToOriginal.value = true;
     folderTitle.value = restoreFolderTitle(new Date());
     step.value = 'preview';
   } catch (e) {
@@ -415,6 +450,7 @@ const handleRestore = async () => {
     report.value = await runRestore(prepared.value.plan, {
       restoreData: restoreData.value,
       recreateMissing: recreateMissing.value,
+      placement: restoreToOriginal.value ? 'original' : 'restoreFolder',
       folderTitle: folderTitle.value,
       onProgress: ({ done, total }) => { progress.value = Math.round((done / total) * 100); },
     });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  NOTES_SEPARATOR, flattenBackup, flattenBrowserTree, planRestore,
+  NOTES_SEPARATOR, flattenBackup, flattenBrowserTree, planRestore, resolveTargetRoots,
 } from '@/backup/plan';
 
 const deepFreeze = (value) => {
@@ -32,19 +32,19 @@ describe('flattenBackup', () => {
 
     expect(flattenBackup(backup)).toEqual([
       {
-        root: 'Bookmarks bar', path: [], title: 'A', url: 'https://a.com/', dateAdded: 1000, data: {},
+        root: 'Bookmarks bar', rootIndex: 0, path: [], title: 'A', url: 'https://a.com/', dateAdded: 1000, data: {},
       },
       {
-        root: 'Bookmarks bar', path: ['Dev', 'JS'], title: 'B', url: 'https://b.com/', dateAdded: 1000, data: { notes: 'n' },
+        root: 'Bookmarks bar', rootIndex: 0, path: ['Dev', 'JS'], title: 'B', url: 'https://b.com/', dateAdded: 1000, data: { notes: 'n' },
       },
       {
-        root: 'Other bookmarks', path: [], title: 'C', url: 'https://c.com/', dateAdded: 1000, data: {},
+        root: 'Other bookmarks', rootIndex: 1, path: [], title: 'C', url: 'https://c.com/', dateAdded: 1000, data: {},
       },
     ]);
   });
 
   it('keeps bookmarks placed directly at the top level', () => {
-    expect(flattenBackup(backupOf([bm('A', 'https://a.com/')]))[0]).toMatchObject({ root: null, path: [] });
+    expect(flattenBackup(backupOf([bm('A', 'https://a.com/')]))[0]).toMatchObject({ root: null, rootIndex: 0, path: [] });
   });
 });
 
@@ -181,7 +181,13 @@ describe('planRestore', () => {
     );
 
     expect(result.creates).toEqual([{
-      folders: ['Bookmarks bar', 'Dev'], title: 'Gone', url: 'https://gone.com/', dateAdded: 7, data: { notes: 'n' },
+      folders: ['Bookmarks bar', 'Dev'],
+      path: ['Dev'],
+      target: { id: '1', title: 'Bookmarks bar' },
+      title: 'Gone',
+      url: 'https://gone.com/',
+      dateAdded: 7,
+      data: { notes: 'n' },
     }]);
     expect(result.summary.toCreate).toBe(1);
   });
@@ -204,5 +210,57 @@ describe('planRestore', () => {
     const rows = deepFreeze([{ id: '10', notes: 'y' }]);
 
     expect(() => planRestore(backup, tree, rows)).not.toThrow();
+  });
+});
+
+describe('resolveTargetRoots', () => {
+  const chromeRoots = [folderNode('1', 'Bookmarks bar', []), folderNode('2', 'Other bookmarks', []), folderNode('3', 'Mobile bookmarks', [])];
+  const firefoxRoots = [
+    folderNode('menu________', 'Bookmarks Menu', []),
+    folderNode('toolbar_____', 'Bookmarks Toolbar', []),
+    folderNode('unfiled_____', 'Other Bookmarks', []),
+    folderNode('mobile______', 'Mobile Bookmarks', []),
+  ];
+  const withSource = (tree, sourceBrowser) => ({ ...backupOf(tree), source: { browser: sourceBrowser } });
+
+  it('uses the root with the same title', () => {
+    const backup = withSource([dir('Other bookmarks', []), dir('Bookmarks bar', [])], 'chrome');
+
+    expect(resolveTargetRoots(backup, browserTree(chromeRoots))).toEqual([
+      { id: '2', title: 'Other bookmarks' },
+      { id: '1', title: 'Bookmarks bar' },
+    ]);
+  });
+
+  it('maps roots by their role when titles differ, e.g. another language', () => {
+    const backup = withSource([dir('书签栏', []), dir('其他书签', []), dir('移动设备书签', [])], 'chrome');
+
+    expect(resolveTargetRoots(backup, browserTree(chromeRoots)).map((t) => t.id)).toEqual(['1', '2', '3']);
+  });
+
+  it('maps Chrome roots to Firefox roots', () => {
+    const backup = withSource([dir('Bookmarks bar', []), dir('Other bookmarks', []), dir('Mobile bookmarks', [])], 'chrome');
+
+    expect(resolveTargetRoots(backup, browserTree(firefoxRoots)).map((t) => t.id))
+      .toEqual(['toolbar_____', 'unfiled_____', 'mobile______']);
+  });
+
+  it('maps Firefox roots to Chrome roots, putting the menu into Other bookmarks', () => {
+    const backup = withSource([dir('Bookmarks Menu', []), dir('Bookmarks Toolbar', []), dir('Other Bookmarks', [])], 'firefox');
+
+    expect(resolveTargetRoots(backup, browserTree(chromeRoots)).map((t) => t.id)).toEqual(['2', '1', '2']);
+  });
+
+  it('puts top-level bookmarks into Other bookmarks', () => {
+    const backup = withSource([bm('A', 'https://a.com/')], 'chrome');
+
+    expect(resolveTargetRoots(backup, browserTree(chromeRoots))).toEqual([{ id: '2', title: 'Other bookmarks' }]);
+  });
+
+  it('returns null for roots it cannot place', () => {
+    const backup = withSource([dir('Bar', []), dir('Other', []), dir('Mobile', []), dir('Fourth', [])], 'chrome');
+    const unknownRoots = [folderNode('x1', 'Something', [])];
+
+    expect(resolveTargetRoots(backup, browserTree(unknownRoots))).toEqual([null, null, null, null]);
   });
 });

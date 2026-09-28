@@ -13,17 +13,56 @@ const hasNotes = (notes) => typeof notes === 'string' && notes.replace(/<p>\s*<\
  * @returns {Array<{root: string|null, path: string[], title: string, url: string, dateAdded?: number, data: object}>}
  */
 export function flattenBackup(backup) {
-  const visit = (node, root, path) => {
+  const visit = (node, root, rootIndex, path) => {
     if (node.type === 'bookmark') {
       return [{
-        root, path, title: node.title, url: node.url, dateAdded: node.dateAdded, data: node.data ?? {},
+        root, rootIndex, path, title: node.title, url: node.url, dateAdded: node.dateAdded, data: node.data ?? {},
       }];
     }
-    return node.children.flatMap((child) => visit(child, root, [...path, node.title]));
+    return node.children.flatMap((child) => visit(child, root, rootIndex, [...path, node.title]));
   };
-  return backup.tree.flatMap((node) => (node.type === 'folder'
-    ? node.children.flatMap((child) => visit(child, node.title, []))
-    : visit(node, null, [])));
+  return backup.tree.flatMap((node, index) => (node.type === 'folder'
+    ? node.children.flatMap((child) => visit(child, node.title, index, []))
+    : visit(node, null, index, [])));
+}
+
+// Root folder ids are fixed per browser, so they tell the role of each current root
+const ROOT_ROLE_BY_ID = {
+  1: 'toolbar',
+  2: 'other',
+  3: 'mobile',
+  menu________: 'menu',
+  toolbar_____: 'toolbar',
+  unfiled_____: 'other',
+  mobile______: 'mobile',
+};
+// Order of the root folders in a backup, by the browser it came from
+const ROOT_ROLES_BY_BROWSER = {
+  firefox: ['menu', 'toolbar', 'other', 'mobile'],
+};
+const CHROMIUM_ROOT_ROLES = ['toolbar', 'other', 'mobile'];
+
+/**
+ * Finds, for each top-level node of the backup, the current root folder to restore into:
+ * same title first (same browser and language), then same role (bookmarks bar, other,
+ * mobile), since names and order differ between browsers and languages.
+ * Chrome has no bookmarks menu, so it maps to Other bookmarks.
+ * @param {object} backup
+ * @param {Array<object>} tree - Result of browser.bookmarks.getTree().
+ * @returns {Array<{id: string, title: string}|null>} Indexed like backup.tree.
+ */
+export function resolveTargetRoots(backup, tree) {
+  const roots = tree.flatMap((root) => root.children ?? []);
+  const byRole = (role) => (role ? roots.find((root) => ROOT_ROLE_BY_ID[root.id] === role) : undefined);
+  const roles = ROOT_ROLES_BY_BROWSER[backup.source?.browser] ?? CHROMIUM_ROOT_ROLES;
+  return backup.tree.map((node, index) => {
+    if (node.type !== 'folder') return byRole('other') ?? null;
+    const role = roles[index];
+    const target = roots.find((root) => root.title === node.title)
+      ?? byRole(role)
+      ?? (role === 'menu' ? byRole('other') : undefined);
+    return target ?? null;
+  }).map((root) => (root ? { id: root.id, title: root.title } : null));
 }
 
 /**
@@ -100,8 +139,13 @@ export function planRestore(backup, tree, rows) {
       backupData: entry.data,
       dateAdded: entry.dateAdded,
     }));
+  const targetRoots = resolveTargetRoots(backup, tree);
   const creates = unmatched.map((entry) => ({
+    // Inside a restore folder the backup root becomes the first level
     folders: entry.root === null ? [...entry.path] : [entry.root, ...entry.path],
+    // In the original location: this root of the current browser, then the same folders
+    path: [...entry.path],
+    target: targetRoots[entry.rootIndex],
     title: entry.title,
     url: entry.url,
     dateAdded: entry.dateAdded,

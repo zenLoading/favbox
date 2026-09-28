@@ -156,44 +156,95 @@ export async function applyDataUpdates(updates, { onProgress } = {}) {
 }
 
 /**
- * Returns the id of the folder for a path inside the restore folder, creating missing folders once.
+ * Finds folders by title under a parent, creating the missing ones once.
+ * The restore folder is created only when first needed.
+ * @param {string} folderTitle - Title of the restore folder.
  */
-const ensureFolder = async (folders, cache) => {
-  let parentId = cache.get('');
-  for (let depth = 1; depth <= folders.length; depth++) {
-    const key = folders.slice(0, depth).join('\u0000');
-    if (!cache.has(key)) {
-      // eslint-disable-next-line no-await-in-loop
-      const folder = await browser.bookmarks.create({ parentId, title: folders[depth - 1] });
-      cache.set(key, folder.id);
+const createFolderResolver = (folderTitle) => {
+  const known = new Map();
+  let restoreFolderId = null;
+  let created = 0;
+
+  const child = async (parentId, title) => {
+    const key = `${parentId}\u0000${title}`;
+    if (!known.has(key)) {
+      const existing = (await browser.bookmarks.getChildren(parentId)).find((c) => !c.url && c.title === title);
+      const folder = existing ?? await browser.bookmarks.create({ parentId, title });
+      if (!existing) created += 1;
+      known.set(key, folder.id);
     }
-    parentId = cache.get(key);
+    return known.get(key);
+  };
+
+  return {
+    folderTitle,
+    path: async (parentId, titles) => {
+      let id = parentId;
+      for (const title of titles) {
+        // eslint-disable-next-line no-await-in-loop
+        id = await child(id, title);
+      }
+      return id;
+    },
+    restoreFolder: async () => {
+      if (!restoreFolderId) {
+        // No parentId: Chrome and Firefox both use "Other bookmarks"
+        restoreFolderId = (await browser.bookmarks.create({ title: folderTitle })).id;
+        created += 1;
+      }
+      return restoreFolderId;
+    },
+    stats: () => ({ restoreFolderId, created }),
+  };
+};
+
+/**
+ * Picks the folder for a bookmark: its original folder when asked and its root was found,
+ * otherwise the same path inside the restore folder.
+ * @returns {Promise<{parentId: string, folderName: string, fallback: boolean}>}
+ */
+const findParent = async (item, placement, folders) => {
+  if (placement === 'original' && item.target) {
+    return {
+      parentId: await folders.path(item.target.id, item.path),
+      folderName: item.path.at(-1) ?? item.target.title,
+      fallback: false,
+    };
   }
-  return parentId;
+  return {
+    parentId: await folders.path(await folders.restoreFolder(), item.folders),
+    folderName: item.folders.at(-1) ?? folders.folderTitle,
+    fallback: placement === 'original',
+  };
 };
 
 /**
  * Creates one bookmark in its folder and builds its row from the backup data.
- * @returns {Promise<object>} The row to store.
+ * @returns {Promise<{row: object, fallback: boolean}>}
  */
-const createBookmark = async (item, folderIds, folderTitle) => {
+const createBookmark = async (item, placement, folders) => {
   if (!isWebUrl(item.url)) throw new Error('Only http and https links can be restored');
-  const parentId = await ensureFolder(item.folders, folderIds);
+  const { parentId, folderName, fallback } = await findParent(item, placement, folders);
   const node = await browser.bookmarks.create({ parentId, title: item.title, url: item.url });
-  return rowFromBackup(node, item.folders.at(-1) ?? folderTitle, item.data, item.dateAdded);
+  return { row: rowFromBackup(node, folderName, item.data, item.dateAdded), fallback };
 };
 
 /**
- * Recreates missing bookmarks inside a new restore folder, keeping their folder path.
+ * Recreates missing bookmarks, keeping their folder path. With placement 'original' they go
+ * back to their original folders (existing folders are reused); bookmarks whose root folder
+ * cannot be found, and all of them with 'restoreFolder', go into a new restore folder.
  * Page fetching by the service worker is paused meanwhile: rows come from the backup.
  * @param {Array<object>} creates - planRestore().creates
- * @param {{folderTitle: string, onProgress?: (progress: {done: number, total: number}) => void}} options
- * @returns {Promise<{folderId: string, folders: number, bookmarks: number, failed: Array<object>}>}
+ * @param {{folderTitle: string, placement?: 'original'|'restoreFolder',
+ *   onProgress?: (progress: {done: number, total: number}) => void}} options
+ * @returns {Promise<{folderId: string|null, folders: number, bookmarks: number, fallback: number,
+ *   failed: Array<object>}>}
  */
-export async function applyCreates(creates, { folderTitle, onProgress }) {
+export async function applyCreates(creates, { folderTitle, placement = 'restoreFolder', onProgress }) {
   const failed = [];
   const pending = [];
   let bookmarks = 0;
+  let fallback = 0;
   // A failed write only loses the data of its own batch; the bookmarks exist and sync refetches them later
   const flush = async () => {
     const batch = pending.splice(0);
@@ -207,17 +258,17 @@ export async function applyCreates(creates, { folderTitle, onProgress }) {
   };
 
   await browser.storage.session.set({ nativeImport: true });
-  let root;
-  const folderIds = new Map();
+  const folders = createFolderResolver(folderTitle);
   try {
-    // No parentId: Chrome and Firefox both use "Other bookmarks"
-    root = await browser.bookmarks.create({ title: folderTitle });
-    folderIds.set('', root.id);
+    // Everything goes into the restore folder: fail early if it cannot be created
+    if (placement !== 'original') await folders.restoreFolder();
     for (const [index, item] of creates.entries()) {
       try {
         // Sequential on purpose: keeps the original order and creates each folder once
         // eslint-disable-next-line no-await-in-loop
-        pending.push({ item, row: await createBookmark(item, folderIds, folderTitle) });
+        const created = await createBookmark(item, placement, folders);
+        pending.push({ item, row: created.row });
+        if (created.fallback) fallback += 1;
       } catch (e) {
         failed.push(failure(item, e));
       }
@@ -231,7 +282,8 @@ export async function applyCreates(creates, { folderTitle, onProgress }) {
   }
   await refreshAttributes();
   notifyPages();
+  const { restoreFolderId, created } = folders.stats();
   return {
-    folderId: root.id, folders: folderIds.size, bookmarks, failed,
+    folderId: restoreFolderId, folders: created, bookmarks, fallback, failed,
   };
 }
