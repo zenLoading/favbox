@@ -4,6 +4,7 @@ import MetadataParser from '@/parser/metadata';
 import { fetchUrl } from '@/services/httpClient';
 import { extractTitle, extractTags } from '@/services/tags';
 import { getFoldersMap, getBookmarksFromNode } from '@/services/browserBookmarks';
+import findActiveTabByUrl from '@/services/browserTabs';
 import sync from './sync';
 import ping from './ping';
 
@@ -63,20 +64,23 @@ browser.bookmarks.onCreated.addListener(async (id, bookmark) => {
     return;
   }
   let response = null;
-  let activeTab = null;
 
   const foldersMapPromise = getFoldersMap();
 
-  // fetch HTML from active tab (content script)
-  [activeTab] = await browser.tabs.query({ active: true });
-  try {
-    console.warn('activeTab', activeTab);
-    console.warn('requesting html from tab', activeTab);
-    const content = await browser.tabs.sendMessage(activeTab.id, { action: 'getHTML' });
-    response = { html: content?.html, error: 0 };
-    console.warn('response from tab', response);
-  } catch (e) {
-    console.error('No tabs. It is weird. Fetching data from internet.. 🌎', e);
+  // fetch HTML from the tab showing this page (content script), otherwise from the network
+  const activeTab = await findActiveTabByUrl(bookmark.url);
+  if (activeTab) {
+    try {
+      console.warn('requesting html from tab', activeTab);
+      const content = await browser.tabs.sendMessage(activeTab.id, { action: 'getHTML' });
+      response = { html: content?.html, error: 0 };
+      console.warn('response from tab', response);
+    } catch (e) {
+      console.error('Content script is not available', e);
+    }
+  }
+  if (response === null) {
+    console.warn('Fetching data from internet.. 🌎', bookmark.url);
     response = await fetchUrl(bookmark.url, 15000);
   }
 
@@ -104,7 +108,6 @@ browser.bookmarks.onCreated.addListener(async (id, bookmark) => {
     console.error('🎉', e, id, bookmark);
   } finally {
     response = null;
-    activeTab = null;
   }
   console.timeEnd(`bookmark-created-${id}`);
 });

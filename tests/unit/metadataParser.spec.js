@@ -382,4 +382,35 @@ describe('MetadataParser', () => {
       expect(parser).toBeInstanceOf(MetadataParser);
     });
   });
+
+  describe('when page fetch failed (html is null)', () => {
+    it('builds a fallback entity that keeps the http status', async () => {
+      const bookmark = { ...mockBookmark, title: 'Dead Page 🏷 #old' };
+      const parser = new MetadataParser(bookmark, { html: null, httpStatus: 404 }, mockFolders);
+
+      const entity = await parser.getFavboxBookmark();
+
+      expect(entity).toMatchObject({
+        id: '123',
+        folderName: 'Test Folder',
+        title: 'Dead Page',
+        tags: ['old'],
+        description: null,
+        image: null,
+        keywords: [],
+        domain: 'example.com',
+        favicon: 'https://example.com/favicon.ico',
+        url: 'https://example.com',
+        httpStatus: 404,
+      });
+    });
+
+    it('does not throw for timed-out requests', async () => {
+      const parser = new MetadataParser(mockBookmark, { html: null, httpStatus: 408 }, mockFolders);
+
+      const entity = await parser.getFavboxBookmark();
+
+      expect(entity.httpStatus).toBe(408);
+    });
+  });
 });
