@@ -122,6 +122,28 @@
                         </RadioGroupOption>
                       </div>
                     </RadioGroup>
+
+                    <section aria-labelledby="settings-backup-label">
+                      <h4
+                        id="settings-backup-label"
+                        class="text-xs font-medium text-gray-500 dark:text-neutral-400"
+                      >
+                        {{ BACKUP_TEXT.label }}
+                      </h4>
+                      <p class="mt-1 text-xs text-gray-500 dark:text-neutral-500">
+                        {{ BACKUP_TEXT.description }}
+                      </p>
+                      <AppButton
+                        class="mt-2 w-full disabled:cursor-wait disabled:opacity-60"
+                        :title="BACKUP_TEXT.export"
+                        :aria-label="BACKUP_TEXT.export"
+                        :disabled="isExporting"
+                        :aria-busy="isExporting"
+                        @click="handleExport"
+                      >
+                        {{ isExporting ? BACKUP_TEXT.exporting : BACKUP_TEXT.export }}
+                      </AppButton>
+                    </section>
                   </div>
                 </div>
               </DialogPanel>
@@ -141,6 +163,10 @@ import {
 import {
   FONT_SIZES, fontSize, skipDeleteConfirmation, mode,
 } from '@/composables/useAppSettings';
+import { notify } from 'notiwind';
+import AppButton from '@/components/app/AppButton.vue';
+import exportBackup from '@/backup/export';
+import { NOTIFICATION_DURATION } from '@/constants/app';
 import IconoirSettings from '~icons/iconoir/settings?width=24px&height=24px';
 import IconoirHalfMoon from '~icons/iconoir/half-moon?width=24px&height=24px';
 import IconoirSunLight from '~icons/iconoir/sun-light?width=24px&height=24px';
@@ -163,4 +189,33 @@ const deleteConfirmationOptions = [
   { value: 'ask', label: 'Ask' },
   { value: 'skip', label: "Don't ask" },
 ];
+
+// Kept in one place to ease adding translations later
+const BACKUP_TEXT = {
+  label: 'Backup',
+  description: 'Save bookmarks, tags, notes and pins to a JSON file. Notes and pins are not synced by your browser.',
+  export: 'Export backup',
+  exporting: 'Exporting…',
+  success: ({ bookmarks, notes, pinned }) => {
+    const format = (value) => value.toLocaleString('en-US');
+    return `Backup saved: ${format(bookmarks)} bookmarks, ${format(notes)} notes, ${format(pinned)} pinned.`;
+  },
+  error: 'Backup failed. Please try again.',
+};
+
+const isExporting = ref(false);
+
+const handleExport = async () => {
+  if (isExporting.value) return;
+  isExporting.value = true;
+  try {
+    const summary = await exportBackup();
+    notify({ group: 'default', text: BACKUP_TEXT.success(summary) }, NOTIFICATION_DURATION);
+  } catch (e) {
+    console.error('Backup failed', e);
+    notify({ group: 'error', text: BACKUP_TEXT.error }, NOTIFICATION_DURATION);
+  } finally {
+    isExporting.value = false;
+  }
+};
 </script>

@@ -33,4 +33,16 @@ describe('BookmarkStorage (JsStore + IndexedDB)', () => {
     expect([...await storage.getAllIds()].sort()).toEqual(['20', '3']);
     expect(await storage.total()).toBe(2);
   });
+
+  it('findAll returns every bookmark across several pages', async () => {
+    const storage = new BookmarkStorage();
+    const ids = Array.from({ length: 250 }, (_, i) => `all-${String(i).padStart(3, '0')}`);
+    await storage.createMany(ids.map(makeBookmark));
+
+    const all = await storage.findAll();
+
+    const found = all.map((b) => b.id).filter((id) => id.startsWith('all-'));
+    expect(found.sort()).toEqual(ids);
+    expect(all.find((b) => b.id === 'all-042')).toMatchObject({ title: 'Bookmark all-042', notes: '' });
+  });
 });

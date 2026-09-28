@@ -380,6 +380,23 @@ export default class BookmarkStorage {
     });
   }
 
+  /**
+   * Reads every bookmark page by page, so a single query never holds the whole table.
+   * @param {number} [pageSize]
+   * @returns {Promise<Array<object>>}
+   */
+  async findAll(pageSize = 100) {
+    const all = [];
+    let lastId = null;
+    for (;;) {
+      // eslint-disable-next-line no-await-in-loop
+      const page = await this.findAfterId(lastId, pageSize);
+      all.push(...page);
+      if (page.length < pageSize) return all;
+      lastId = page[page.length - 1].id;
+    }
+  }
+
   async getAllIds() {
     // make sure JsStore has created the database before reading it natively
     await useConnection();
