@@ -138,6 +138,48 @@ describe('BackupPanel', () => {
       expect(runRestore).not.toHaveBeenCalled();
     });
 
+    it('says so when the backup has nothing new, instead of showing a disabled button', async () => {
+      vi.mocked(prepareRestore).mockResolvedValue(prepared({
+        skipped: { count: 0, items: [] },
+        plan: {
+          updates: [],
+          creates: [],
+          summary: summary({
+            matched: 3, toUpdate: 0, mergedNotes: 0, unchanged: 3, toCreate: 0,
+          }),
+        },
+      }));
+      const wrapper = await mountPanel();
+
+      await chooseFile(wrapper);
+
+      const preview = wrapper.get('[data-testid="restore-preview"]');
+      expect(preview.text()).toContain('Nothing to restore: all 3 bookmarks in this backup are already here with the same notes, pins and screenshots.');
+      expect(wrapper.find('[data-testid="restore-data"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="recreate-missing"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="restore-start"]').exists()).toBe(false);
+
+      await wrapper.findAll('button').find((b) => b.text() === 'Done').trigger('click');
+      expect(wrapper.find('[data-testid="restore-file"]').exists()).toBe(true);
+    });
+
+    it('says so when the backup has no bookmarks at all', async () => {
+      vi.mocked(prepareRestore).mockResolvedValue(prepared({
+        plan: {
+          updates: [],
+          creates: [],
+          summary: summary({
+            matched: 0, toUpdate: 0, mergedNotes: 0, unchanged: 0, toCreate: 0,
+          }),
+        },
+      }));
+      const wrapper = await mountPanel();
+
+      await chooseFile(wrapper);
+
+      expect(wrapper.get('[data-testid="restore-nothing"]').text()).toBe('This backup has no bookmarks to restore.');
+    });
+
     it('disables options that have nothing to do and the button when nothing is selected', async () => {
       vi.mocked(prepareRestore).mockResolvedValue(prepared({
         plan: { updates: [], creates: [], summary: summary({ toUpdate: 0, mergedNotes: 0 }) },

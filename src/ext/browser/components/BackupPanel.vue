@@ -111,52 +111,63 @@
         <p class="text-gray-500 dark:text-neutral-500">
           {{ previewHeading }}
         </p>
-        <label
-          for="backup-restore-data"
-          class="flex items-start gap-2"
-          :class="summary.toUpdate === 0 ? 'opacity-50' : 'cursor-pointer'"
-        >
-          <input
-            id="backup-restore-data"
-            v-model="restoreData"
-            type="checkbox"
-            class="mt-0.5 size-3.5 rounded border-gray-300 text-black focus:ring-0 dark:border-neutral-700 dark:bg-neutral-900"
-            :disabled="summary.toUpdate === 0"
-            data-testid="restore-data"
+        <template v-if="hasSomethingToRestore">
+          <label
+            for="backup-restore-data"
+            class="flex items-start gap-2"
+            :class="summary.toUpdate === 0 ? 'opacity-50' : 'cursor-pointer'"
           >
-          <span>
-            {{ TEXT.restoreData(summary.toUpdate) }}
-            <span
-              v-if="summary.mergedNotes > 0"
-              class="block text-gray-400 dark:text-neutral-500"
-            >{{ TEXT.mergedHint(summary.mergedNotes) }}</span>
-          </span>
-        </label>
-        <label
-          for="backup-recreate-missing"
-          class="flex items-start gap-2"
-          :class="summary.toCreate === 0 ? 'opacity-50' : 'cursor-pointer'"
-        >
-          <input
-            id="backup-recreate-missing"
-            v-model="recreateMissing"
-            type="checkbox"
-            class="mt-0.5 size-3.5 rounded border-gray-300 text-black focus:ring-0 dark:border-neutral-700 dark:bg-neutral-900"
-            :disabled="summary.toCreate === 0"
-            data-testid="recreate-missing"
+            <input
+              id="backup-restore-data"
+              v-model="restoreData"
+              type="checkbox"
+              class="mt-0.5 size-3.5 rounded border-gray-300 text-black focus:ring-0 dark:border-neutral-700 dark:bg-neutral-900"
+              :disabled="summary.toUpdate === 0"
+              data-testid="restore-data"
+            >
+            <span>
+              {{ TEXT.restoreData(summary.toUpdate) }}
+              <span
+                v-if="summary.mergedNotes > 0"
+                class="block text-gray-400 dark:text-neutral-500"
+              >{{ TEXT.mergedHint(summary.mergedNotes) }}</span>
+            </span>
+          </label>
+          <label
+            for="backup-recreate-missing"
+            class="flex items-start gap-2"
+            :class="summary.toCreate === 0 ? 'opacity-50' : 'cursor-pointer'"
           >
-          <span>
-            {{ TEXT.recreate(summary.toCreate, folderTitle) }}
-            <span class="block text-gray-400 dark:text-neutral-500">{{ TEXT.recreateHint }}</span>
-          </span>
-        </label>
+            <input
+              id="backup-recreate-missing"
+              v-model="recreateMissing"
+              type="checkbox"
+              class="mt-0.5 size-3.5 rounded border-gray-300 text-black focus:ring-0 dark:border-neutral-700 dark:bg-neutral-900"
+              :disabled="summary.toCreate === 0"
+              data-testid="recreate-missing"
+            >
+            <span>
+              {{ TEXT.recreate(summary.toCreate, folderTitle) }}
+              <span class="block text-gray-400 dark:text-neutral-500">{{ TEXT.recreateHint }}</span>
+            </span>
+          </label>
+        </template>
+        <p
+          v-else
+          data-testid="restore-nothing"
+        >
+          {{ TEXT.nothingToRestore(summary.matched) }}
+        </p>
         <p
           v-if="prepared.skipped.count > 0"
           class="text-gray-400 dark:text-neutral-500"
         >
           {{ TEXT.skipped(prepared.skipped.count) }}
         </p>
-        <div class="flex gap-2">
+        <div
+          v-if="hasSomethingToRestore"
+          class="flex gap-2"
+        >
           <AppButton
             class="flex-1 disabled:cursor-not-allowed disabled:opacity-60"
             :title="TEXT.restore"
@@ -177,6 +188,15 @@
             {{ TEXT.cancel }}
           </AppButton>
         </div>
+        <AppButton
+          v-else
+          variant="gray"
+          :title="TEXT.done"
+          :aria-label="TEXT.done"
+          @click="reset"
+        >
+          {{ TEXT.done }}
+        </AppButton>
       </div>
 
       <div
@@ -268,6 +288,9 @@ const TEXT = {
   recreate: (n, folder) => `Recreate ${plural(n, 'missing bookmark')} in "${folder}"`,
   recreateHint: 'Recreated bookmarks sync to all your devices.',
   skipped: (n) => `${plural(n, 'entry')} skipped (unsupported or invalid links).`,
+  nothingToRestore: (n) => (n === 0
+    ? 'This backup has no bookmarks to restore.'
+    : `Nothing to restore: all ${plural(n, 'bookmark')} in this backup ${n === 1 ? 'is' : 'are'} already here with the same notes, pins and screenshots.`),
   restore: 'Restore',
   cancel: 'Cancel',
   restoring: 'Restoring…',
@@ -313,6 +336,7 @@ const previewHeading = computed(() => {
   const date = exportedAt ? new Date(exportedAt).toLocaleDateString('en-US', { dateStyle: 'medium' }) : null;
   return TEXT.previewHeading(date, summary.value.matched);
 });
+const hasSomethingToRestore = computed(() => summary.value.toUpdate > 0 || summary.value.toCreate > 0);
 const canRestore = computed(() => (restoreData.value && summary.value.toUpdate > 0)
   || (recreateMissing.value && summary.value.toCreate > 0));
 const reportLines = computed(() => {
