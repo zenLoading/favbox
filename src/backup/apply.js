@@ -6,6 +6,9 @@ import { extractTitle, extractTags } from '@/services/tags';
 import { restoreChanges } from './plan';
 
 const ROW_BATCH_SIZE = 100;
+// JsStore never settles when its worker rejects a message; without a limit the restore would
+// hang with page fetching paused (nativeImport) until the browser restarts
+export const WRITE_TIMEOUT_MS = 30000;
 const WEB_PROTOCOLS = new Set(['http:', 'https:']);
 
 const bookmarkStorage = new BookmarkStorage();
@@ -27,6 +30,14 @@ const notifyPages = () => {
 };
 
 const failure = ({ title, url }, error) => ({ title, url, reason: error?.message ?? String(error) });
+
+const withTimeout = (promise, ms) => {
+  let timer;
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`Saving did not finish within ${ms / 1000}s`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+};
 
 // Attributes are derived data and get rebuilt on the next sync, so a failure here must not fail the restore
 const refreshAttributes = async () => {
@@ -69,7 +80,8 @@ export function rowFromBackup(node, folderName, data, dateAdded, now = new Date(
     description: data.description ?? null,
     favicon: data.favicon ?? `https://${domain}/favicon.ico`,
     image: data.image ?? null,
-    keywords: data.keywords ?? [],
+    // Copied: rows are structured-cloned into the JsStore worker, and a Vue proxy cannot be
+    keywords: [...(data.keywords ?? [])],
     notes: data.notes ?? '',
     pinned: data.pinned === 1 ? 1 : 0,
     httpStatus: data.httpStatus ?? 200,
@@ -187,7 +199,7 @@ export async function applyCreates(creates, { folderTitle, onProgress }) {
     const batch = pending.splice(0);
     if (batch.length === 0) return;
     try {
-      await bookmarkStorage.createMany(batch.map(({ row }) => row));
+      await withTimeout(bookmarkStorage.createMany(batch.map(({ row }) => row)), WRITE_TIMEOUT_MS);
       bookmarks += batch.length;
     } catch (e) {
       failed.push(...batch.map(({ item }) => failure(item, e)));

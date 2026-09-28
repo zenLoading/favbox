@@ -159,6 +159,20 @@ describe('planRestore', () => {
     });
   });
 
+  it('also plans matches without a stored row and without data, so the row comes from the backup', () => {
+    const data = { description: 'd', favicon: 'https://a.com/f.ico' };
+    const result = plan(
+      [dir('Bar', [bm('A', 'https://a.com/', data, 42)])],
+      [folderNode('1', 'Bar', [node('10', 'A', 'https://a.com/')])],
+      [],
+    );
+
+    expect(result.updates).toEqual([expect.objectContaining({
+      id: '10', rowMissing: true, changes: {}, backupData: data, dateAdded: 42,
+    })]);
+    expect(result.summary).toMatchObject({ toUpdate: 1, unchanged: 0 });
+  });
+
   it('lists missing bookmarks to recreate, keeping their root and folder path', () => {
     const result = plan(
       [dir('Bookmarks bar', [dir('Dev', [bm('Gone', 'https://gone.com/', { notes: 'n' }, 7)])])],

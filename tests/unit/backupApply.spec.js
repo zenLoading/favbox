@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { reactive } from 'vue';
 import browser from 'webextension-polyfill';
 import { NOTES_SEPARATOR } from '@/backup/plan';
 import {
-  rowFromBackup, restoreFolderTitle, applyDataUpdates, applyCreates,
+  WRITE_TIMEOUT_MS, rowFromBackup, restoreFolderTitle, applyDataUpdates, applyCreates,
 } from '@/backup/apply';
 
 const mocks = vi.hoisted(() => ({
@@ -141,6 +142,16 @@ describe('rowFromBackup', () => {
       createdAt: '2026-09-28T10:00:00.000Z',
       updatedAt: '2026-09-28T10:00:00.000Z',
     });
+  });
+
+  it('returns plain data that can be sent to the database worker, even from reactive input', () => {
+    // JsStore runs in a Web Worker and structured-clones every row; Vue proxies cannot be cloned
+    const data = reactive({ keywords: ['a', 'b'], notes: 'n' });
+
+    const row = rowFromBackup({ id: '7', parentId: '3', title: 'A', url: 'https://a.com/' }, 'F', data, 1);
+
+    expect(() => structuredClone(row)).not.toThrow();
+    expect(row.keywords).toEqual(['a', 'b']);
   });
 
   it('fills defaults when the backup has no data', () => {
@@ -315,6 +326,21 @@ describe('applyCreates', () => {
 
     await expect(applyCreates([create()], { folderTitle: 'R' })).rejects.toThrow('quota');
     expect(fake.session.nativeImport).toBe(false);
+  });
+
+  it('gives up on a database write that never finishes and still resumes page fetching', async () => {
+    vi.useFakeTimers();
+    // JsStore never settles when a row cannot be sent to its worker
+    mocks.bookmarkStorage.createMany.mockImplementation(() => new Promise(() => {}));
+
+    const pending = applyCreates([create()], { folderTitle: 'R' });
+    await vi.advanceTimersByTimeAsync(WRITE_TIMEOUT_MS);
+    const result = await pending;
+    vi.useRealTimers();
+
+    expect(fake.session.nativeImport).toBe(false);
+    expect(result.bookmarks).toBe(0);
+    expect(result.failed).toEqual([{ title: 'Gone 🏷 #rust', url: 'https://gone.com/', reason: expect.stringContaining('did not finish') }]);
   });
 
   it('records a failed bookmark and continues with the rest', async () => {

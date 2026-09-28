@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { isProxy } from 'vue';
 import { mount, flushPromises } from '@vue/test-utils';
 import browser from 'webextension-polyfill';
 import { notify } from 'notiwind';
@@ -216,9 +217,38 @@ describe('BackupPanel', () => {
       expect(options.folderTitle).toMatch(/^FavBox restore \d{4}-\d{2}-\d{2}$/);
       const report = wrapper.get('[data-testid="restore-report"]').text();
       expect(report).toContain('Restored data for 3 bookmarks (1 note merged).');
-      expect(report).toContain('Recreated 2 bookmarks in "FavBox restore 2026-09-28".');
+      expect(report).toContain('Recreated 2 bookmarks in "Other bookmarks › FavBox restore 2026-09-28".');
       expect(report).toContain('1 item could not be restored:');
       expect(report).toContain('Broken: Invalid URL');
+    });
+
+    it('passes a plain plan to the restore, since the database worker cannot clone Vue proxies', async () => {
+      vi.mocked(prepareRestore).mockResolvedValue(prepared({
+        plan: {
+          updates: [{ id: '1', backupData: { keywords: ['a'] } }],
+          creates: [{ folders: ['Bar'], data: { keywords: ['b'] } }],
+          summary: summary(),
+        },
+      }));
+      const wrapper = await mountPanel();
+      await chooseFile(wrapper);
+      await wrapper.get('[data-testid="recreate-missing"]').setValue(true);
+
+      await wrapper.get('[data-testid="restore-start"]').trigger('click');
+      await flushPromises();
+
+      const [plan] = vi.mocked(runRestore).mock.calls[0];
+      expect(isProxy(plan)).toBe(false);
+      expect(isProxy(plan.creates[0].data.keywords)).toBe(false);
+      expect(() => structuredClone(plan)).not.toThrow();
+    });
+
+    it('tells where recreated bookmarks go', async () => {
+      const wrapper = await mountPanel();
+
+      await chooseFile(wrapper);
+
+      expect(wrapper.get('[data-testid="restore-preview"]').text()).toContain('Recreated bookmarks go to "Other bookmarks" and sync to all your devices.');
     });
 
     it('goes back to the start after cancelling', async () => {

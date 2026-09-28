@@ -85,8 +85,9 @@ export function planRestore(backup, tree, rows) {
   const planned = matches.map(({ backup: entry, current }) => ({
     entry, current, ...restoreChanges(entry.data, current.row),
   }));
+  // A bookmark without a stored row gets one from the backup, so it needs no page fetch
   const updates = planned
-    .filter(({ changes }) => Object.keys(changes).length > 0)
+    .filter(({ changes, current }) => Object.keys(changes).length > 0 || current.row === null)
     .map(({
       entry, current, changes, mergedNotes,
     }) => ({

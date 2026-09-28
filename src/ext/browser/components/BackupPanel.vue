@@ -246,7 +246,7 @@
 
 <script setup>
 import {
-  computed, onMounted, ref, useTemplateRef,
+  computed, onMounted, ref, shallowRef, useTemplateRef,
 } from 'vue';
 import { notify } from 'notiwind';
 import AppButton from '@/components/app/AppButton.vue';
@@ -261,6 +261,8 @@ import { formatLastBackup } from '@/backup/reminder';
 import { NOTIFICATION_DURATION } from '@/constants/app';
 
 const MAX_FAILURES_SHOWN = 5;
+// Where bookmarks.create puts the restore folder when no parent is given (Chrome and Firefox)
+const OTHER_BOOKMARKS = 'Other bookmarks';
 const count = (value) => value.toLocaleString('en-US');
 const plural = (n, word) => `${count(n)} ${word}${n === 1 ? '' : 's'}`;
 
@@ -286,7 +288,7 @@ const TEXT = {
   restoreData: (n) => `Restore notes, pins and screenshots for ${plural(n, 'bookmark')}`,
   mergedHint: (n) => `${plural(n, 'note')} will be added below the current notes`,
   recreate: (n, folder) => `Recreate ${plural(n, 'missing bookmark')} in "${folder}"`,
-  recreateHint: 'Recreated bookmarks sync to all your devices.',
+  recreateHint: `Recreated bookmarks go to "${OTHER_BOOKMARKS}" and sync to all your devices.`,
   skipped: (n) => `${plural(n, 'entry')} skipped (unsupported or invalid links).`,
   nothingToRestore: (n) => (n === 0
     ? 'This backup has no bookmarks to restore.'
@@ -295,7 +297,7 @@ const TEXT = {
   cancel: 'Cancel',
   restoring: 'Restoring…',
   reportData: (n, merged) => `Restored data for ${plural(n, 'bookmark')}${merged ? ` (${plural(merged, 'note')} merged)` : ''}.`,
-  reportRecreated: (n, folder) => `Recreated ${plural(n, 'bookmark')} in "${folder}".`,
+  reportRecreated: (n, folder) => `Recreated ${plural(n, 'bookmark')} in "${OTHER_BOOKMARKS} › ${folder}".`,
   reportNothing: 'Nothing needed to be restored.',
   reportFailed: (n) => `${plural(n, 'item')} could not be restored:`,
   done: 'Done',
@@ -321,12 +323,13 @@ const exporting = ref(null);
 
 const step = ref('idle');
 const errorMessage = ref('');
-const prepared = ref(null);
+// shallowRef: the plan goes to the JsStore worker, which cannot clone deep reactive proxies
+const prepared = shallowRef(null);
 const restoreData = ref(true);
 const recreateMissing = ref(false);
 const folderTitle = ref('');
 const progress = ref(0);
-const report = ref(null);
+const report = shallowRef(null);
 
 const isBusy = computed(() => exporting.value !== null || step.value === 'preparing' || step.value === 'running');
 const lastBackupText = computed(() => formatLastBackup(lastBackupAt.value, Date.now()));
