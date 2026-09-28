@@ -5,6 +5,8 @@ import { Connection, DATA_TYPE } from 'jsstore';
 import workerInjector from 'jsstore/dist/worker_injector';
 import jsstoreWorker from 'jsstore/dist/jsstore.worker.min.js?worker';
 
+export const DB_NAME = 'favbox_database_v2';
+
 let connection = null;
 let isDbInitialized = false;
 
@@ -139,7 +141,7 @@ const getDb = () => {
   };
 
   const database = {
-    name: 'favbox_database_v2',
+    name: DB_NAME,
     tables: [tblBookmarks, tblAttributes],
   };
   return database;

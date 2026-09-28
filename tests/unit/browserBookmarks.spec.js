@@ -1,9 +1,8 @@
 import {
-  getBookmarksCount,
   getBookmarksFromNode,
   getFolderTree,
   getFoldersMap,
-  getBookmarksIterator,
+  getBookmarksSnapshot,
 } from '@/services/browserBookmarks';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import browser from 'webextension-polyfill';
@@ -21,69 +20,6 @@ describe('browserBookmarks', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetTree.mockClear();
-  });
-
-  describe('getBookmarksCount', () => {
-    it('should count bookmarks in tree', async () => {
-      const mockTree = [
-        {
-          id: '0',
-          children: [
-            {
-              id: '1',
-              title: 'Folder 1',
-              children: [
-                { id: '2', title: 'Bookmark 1', url: 'https://example.com' },
-                { id: '3', title: 'Bookmark 2', url: 'https://google.com' },
-              ],
-            },
-            {
-              id: '4',
-              title: 'Folder 2',
-              children: [
-                { id: '5', title: 'Bookmark 3', url: 'https://github.com' },
-              ],
-            },
-          ],
-        },
-      ];
-      mockGetTree.mockResolvedValue(mockTree);
-
-      const count = await getBookmarksCount();
-      expect(count).toBe(3);
-    });
-
-    it('should return 0 for empty tree', async () => {
-      mockGetTree.mockResolvedValue([{ id: '0', children: [] }]);
-      const count = await getBookmarksCount();
-      expect(count).toBe(0);
-    });
-
-    it('should handle nested folders', async () => {
-      const mockTree = [
-        {
-          id: '0',
-          children: [
-            {
-              id: '1',
-              title: 'Folder 1',
-              children: [
-                {
-                  id: '2',
-                  title: 'Subfolder',
-                  children: [
-                    { id: '3', title: 'Bookmark 1', url: 'https://example.com' },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-      ];
-      mockGetTree.mockResolvedValue(mockTree);
-      const count = await getBookmarksCount();
-      expect(count).toBe(1);
-    });
   });
 
   describe('getBookmarksFromNode', () => {
@@ -328,78 +264,63 @@ describe('browserBookmarks', () => {
     });
   });
 
-  describe('getBookmarksIterator', () => {
-    it('should iterate over all bookmarks', async () => {
-      const mockTree = [
-        {
-          id: '0',
-          children: [
-            {
-              id: '1',
-              title: 'Folder 1',
-              children: [
-                { id: '2', title: 'Bookmark 1', url: 'https://example.com' },
-                { id: '3', title: 'Bookmark 2', url: 'https://google.com' },
-              ],
-            },
-            { id: '4', title: 'Bookmark 3', url: 'https://github.com' },
-          ],
-        },
-      ];
+  describe('getBookmarksSnapshot', () => {
+    const mockTree = [
+      {
+        id: '0',
+        title: '',
+        children: [
+          {
+            id: '1',
+            title: 'Folder',
+            children: [
+              { id: '2', title: 'Bookmark 1', url: 'https://example.com', parentId: '1' },
+              {
+                id: '3',
+                title: 'Subfolder',
+                children: [
+                  { id: '4', title: 'Bookmark 2', url: 'https://github.com', parentId: '3' },
+                ],
+              },
+            ],
+          },
+          { id: '5', title: 'Bookmark 3', url: 'https://google.com', parentId: '0' },
+        ],
+      },
+    ];
+
+    it('reads the bookmark tree only once', async () => {
       mockGetTree.mockResolvedValue(mockTree);
 
-      const bookmarks = [];
-      for await (const bookmark of getBookmarksIterator()) {
-        bookmarks.push(bookmark);
-      }
+      await getBookmarksSnapshot();
 
-      expect(bookmarks).toHaveLength(3);
-      expect(bookmarks[0].id).toBe('2');
-      expect(bookmarks[1].id).toBe('3');
-      expect(bookmarks[2].id).toBe('4');
+      expect(mockGetTree).toHaveBeenCalledTimes(1);
     });
 
-    it('should handle empty tree', async () => {
+    it('returns every bookmark in tree order', async () => {
+      mockGetTree.mockResolvedValue(mockTree);
+
+      const { bookmarks } = await getBookmarksSnapshot();
+
+      expect(bookmarks.map((b) => b.id)).toEqual(['2', '4', '5']);
+      expect(bookmarks[1]).toMatchObject({ url: 'https://github.com', parentId: '3' });
+    });
+
+    it('returns a map of folder ids to titles', async () => {
+      mockGetTree.mockResolvedValue(mockTree);
+
+      const { folders } = await getBookmarksSnapshot();
+
+      expect(folders).toEqual(new Map([['0', ''], ['1', 'Folder'], ['3', 'Subfolder']]));
+    });
+
+    it('handles an empty tree', async () => {
       mockGetTree.mockResolvedValue([{ id: '0', children: [] }]);
 
-      const bookmarks = [];
-      for await (const bookmark of getBookmarksIterator()) {
-        bookmarks.push(bookmark);
-      }
+      const { bookmarks, folders } = await getBookmarksSnapshot();
 
-      expect(bookmarks).toHaveLength(0);
-    });
-
-    it('should handle nested folders', async () => {
-      const mockTree = [
-        {
-          id: '0',
-          children: [
-            {
-              id: '1',
-              title: 'Folder',
-              children: [
-                {
-                  id: '2',
-                  title: 'Subfolder',
-                  children: [
-                    { id: '3', title: 'Bookmark', url: 'https://example.com' },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-      ];
-      mockGetTree.mockResolvedValue(mockTree);
-
-      const bookmarks = [];
-      for await (const bookmark of getBookmarksIterator()) {
-        bookmarks.push(bookmark);
-      }
-
-      expect(bookmarks).toHaveLength(1);
-      expect(bookmarks[0].id).toBe('3');
+      expect(bookmarks).toEqual([]);
+      expect(folders).toEqual(new Map([['0', undefined]]));
     });
   });
 });

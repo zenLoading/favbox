@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import MetadataParser, { isHeadWithPreview } from '@/parser/metadata';
+import MetadataParser, { isHeadWithPreview, PAGE_FETCH_OPTIONS } from '@/parser/metadata';
 
 describe('MetadataParser', () => {
   let mockBookmark;
@@ -399,6 +399,16 @@ describe('MetadataParser', () => {
 
     it('is false when the head has no preview image, so the body is still read', () => {
       expect(isHeadWithPreview('<head><title>x</title></head><body><meta property="og:image">')).toBe(false);
+    });
+  });
+
+  describe('PAGE_FETCH_OPTIONS', () => {
+    it('fetches only html and stops once the head has a preview image', () => {
+      expect(PAGE_FETCH_OPTIONS).toEqual({
+        htmlOnly: true,
+        maxBytes: 512 * 1024,
+        isComplete: isHeadWithPreview,
+      });
     });
   });
 

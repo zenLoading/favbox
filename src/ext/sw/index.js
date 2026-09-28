@@ -1,6 +1,6 @@
 import BookmarkStorage from '@/storage/bookmark';
 import AttributeStorage from '@/storage/attribute';
-import MetadataParser from '@/parser/metadata';
+import MetadataParser, { PAGE_FETCH_OPTIONS } from '@/parser/metadata';
 import { fetchUrl } from '@/services/httpClient';
 import { extractTitle, extractTags } from '@/services/tags';
 import { getFoldersMap, getBookmarksFromNode } from '@/services/browserBookmarks';
@@ -81,7 +81,7 @@ browser.bookmarks.onCreated.addListener(async (id, bookmark) => {
   }
   if (response === null) {
     console.warn('Fetching data from internet.. 🌎', bookmark.url);
-    response = await fetchUrl(bookmark.url, 15000);
+    response = await fetchUrl(bookmark.url, 15000, PAGE_FETCH_OPTIONS);
   }
 
   try {

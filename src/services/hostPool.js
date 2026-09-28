@@ -1,4 +1,17 @@
 /**
+ * Returns the hostname of a url, or an empty string when the url is invalid.
+ * @param {string} url
+ * @returns {string}
+ */
+export function hostOfUrl(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Groups items by host, keeping their original order within each host.
  * @param {Array} items
  * @param {(item: any) => string} hostOf

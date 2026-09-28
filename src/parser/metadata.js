@@ -17,6 +17,17 @@ export function isHeadWithPreview(html) {
 }
 
 /**
+ * fetchUrl options for pages that will be parsed: skip non-HTML responses and stop
+ * reading once the head has a preview image. Without one, read up to 512KB so the
+ * body can still be searched for a preview image.
+ */
+export const PAGE_FETCH_OPTIONS = {
+  htmlOnly: true,
+  maxBytes: 512 * 1024,
+  isComplete: isHeadWithPreview,
+};
+
+/**
  * Class for parsing bookmark metadata from HTML documents.
  */
 export default class MetadataParser {
@@ -243,7 +254,6 @@ export default class MetadataParser {
    * @returns {Promise<object>} A promise that resolves to the bookmark entity object.
    */
   async getFavboxBookmark() {
-    console.warn(this.getImage());
     const entity = {
       id: this.#bookmark.id,
       folderId: this.#bookmark.parentId,

@@ -1,11 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fetchUrl } from '@/services/httpClient';
-import { isHeadWithPreview } from '@/parser/metadata';
+import { PAGE_FETCH_OPTIONS } from '@/parser/metadata';
 import sync from '@/ext/sw/sync';
 
 const mocks = vi.hoisted(() => ({
   bookmarkStorage: {
-    total: vi.fn(),
     getAllIds: vi.fn(),
     createMany: vi.fn(),
     removeByIds: vi.fn(),
@@ -14,8 +13,7 @@ const mocks = vi.hoisted(() => ({
     aggregateKeywords: vi.fn(),
   },
   attributeStorage: {
-    clear: vi.fn(),
-    saveMany: vi.fn(),
+    refreshFromAggregated: vi.fn(),
   },
   browserBookmarks: [],
 }));
@@ -43,11 +41,10 @@ vi.mock('@/services/httpClient', () => ({
 }));
 
 vi.mock('@/services/browserBookmarks', () => ({
-  getBookmarksCount: vi.fn(async () => mocks.browserBookmarks.length),
-  getFoldersMap: vi.fn(async () => new Map([['1', 'Folder']])),
-  getBookmarksIterator: vi.fn(async function* iterate() {
-    yield* mocks.browserBookmarks;
-  }),
+  getBookmarksSnapshot: vi.fn(async () => ({
+    bookmarks: mocks.browserBookmarks,
+    folders: new Map([['1', 'Folder']]),
+  })),
 }));
 
 const makeBookmarks = (count, host = (i) => `site${i % 7}.com`) => Array.from({ length: count }, (_, i) => ({
@@ -67,7 +64,6 @@ describe('sync', () => {
     vi.spyOn(console, 'time').mockImplementation(() => {});
     vi.spyOn(console, 'timeEnd').mockImplementation(() => {});
     mocks.browserBookmarks = [];
-    mocks.bookmarkStorage.total.mockResolvedValue(0);
     mocks.bookmarkStorage.getAllIds.mockResolvedValue([]);
     mocks.bookmarkStorage.createMany.mockResolvedValue();
     mocks.bookmarkStorage.removeByIds.mockResolvedValue();
@@ -102,7 +98,6 @@ describe('sync', () => {
 
   it('only fetches bookmarks that are not stored yet', async () => {
     mocks.browserBookmarks = makeBookmarks(5);
-    mocks.bookmarkStorage.total.mockResolvedValue(2);
     mocks.bookmarkStorage.getAllIds.mockResolvedValue(['1', '2']);
 
     await sync();
@@ -113,7 +108,6 @@ describe('sync', () => {
 
   it('removes stored bookmarks that no longer exist in the browser', async () => {
     mocks.browserBookmarks = makeBookmarks(2);
-    mocks.bookmarkStorage.total.mockResolvedValue(3);
     mocks.bookmarkStorage.getAllIds.mockResolvedValue(['1', '2', '99']);
 
     await sync();
@@ -121,14 +115,53 @@ describe('sync', () => {
     expect(mocks.bookmarkStorage.removeByIds).toHaveBeenCalledWith(['99']);
   });
 
-  it('does nothing when counts already match', async () => {
+  it('does nothing when the stored ids match the browser', async () => {
     mocks.browserBookmarks = makeBookmarks(4);
-    mocks.bookmarkStorage.total.mockResolvedValue(4);
+    mocks.bookmarkStorage.getAllIds.mockResolvedValue(['1', '2', '3', '4']);
 
     await sync();
 
     expect(fetchUrl).not.toHaveBeenCalled();
     expect(mocks.bookmarkStorage.createMany).not.toHaveBeenCalled();
+    expect(mocks.bookmarkStorage.removeByIds).not.toHaveBeenCalled();
+    expect(mocks.attributeStorage.refreshFromAggregated).not.toHaveBeenCalled();
+  });
+
+  it('syncs when a bookmark was added and another removed, even though counts match', async () => {
+    mocks.browserBookmarks = makeBookmarks(3);
+    mocks.bookmarkStorage.getAllIds.mockResolvedValue(['1', '2', '99']);
+
+    await sync();
+
+    expect(savedBookmarks().map((b) => b.id)).toEqual(['3']);
+    expect(mocks.bookmarkStorage.removeByIds).toHaveBeenCalledWith(['99']);
+  });
+
+  it('does not remove bookmarks stored by onCreated while the sync is running', async () => {
+    mocks.browserBookmarks = makeBookmarks(2);
+    // '1' is stored before the sync; '50' is created by onCreated during the sync
+    mocks.bookmarkStorage.getAllIds
+      .mockResolvedValueOnce(['1'])
+      .mockResolvedValue(['1', '2', '50']);
+
+    await sync();
+
+    const removed = mocks.bookmarkStorage.removeByIds.mock.calls.flatMap(([ids]) => ids);
+    expect(removed).not.toContain('50');
+  });
+
+  it('rebuilds attributes from the aggregated bookmarks after syncing', async () => {
+    mocks.browserBookmarks = makeBookmarks(1);
+    const domains = [{ field: 'domain', value: 'site0.com', count: 1 }];
+    const tags = [{ field: 'tags', value: 'dev', count: 1 }];
+    const keywords = [{ field: 'keywords', value: 'js', count: 1 }];
+    mocks.bookmarkStorage.aggregateDomains.mockResolvedValue(domains);
+    mocks.bookmarkStorage.aggregateTags.mockResolvedValue(tags);
+    mocks.bookmarkStorage.aggregateKeywords.mockResolvedValue(keywords);
+
+    await sync();
+
+    expect(mocks.attributeStorage.refreshFromAggregated).toHaveBeenCalledWith(domains, tags, keywords, true);
   });
 
   it('fetches only html and stops reading once the head has what the parser needs', async () => {
@@ -139,7 +172,7 @@ describe('sync', () => {
     expect(fetchUrl).toHaveBeenCalledWith(
       'https://site0.com/page/1',
       expect.any(Number),
-      expect.objectContaining({ htmlOnly: true, maxBytes: expect.any(Number), isComplete: isHeadWithPreview }),
+      PAGE_FETCH_OPTIONS,
     );
   });
 

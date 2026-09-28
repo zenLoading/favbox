@@ -96,7 +96,7 @@ import AppInfiniteScroll from '@/components/app/AppInfiniteScroll.vue';
 import HealthCheckCard from '@/ext/browser/components/card/HealthCheckCard.vue';
 import { HTTP_STATUS } from '@/constants/httpStatus';
 import { PAGINATION_LIMIT, NOTIFICATION_DURATION } from '@/constants/app';
-import { fetchUrl, fetchHead } from '@/services/httpClient';
+import findBrokenLinks from '@/services/linkChecker';
 import AppButton from '@/components/app/AppButton.vue';
 import AppProgress from '@/components/app/AppProgress.vue';
 import AppSpinner from '@/components/app/AppSpinner.vue';
@@ -141,19 +141,7 @@ const scan = async () => {
     processed += batch.length;
     progress.value = Math.ceil((processed / totalBookmarks) * 100);
 
-    const results = await Promise.all(
-      batch.map(async (bookmark) => {
-        let httpStatus = await fetchHead(bookmark.url, 15000);
-        if (httpStatus === HTTP_STATUS.NOT_FOUND) {
-          httpStatus = (await fetchUrl(bookmark.url, 15000)).httpStatus;
-        }
-        return httpStatus >= HTTP_STATUS.BAD_REQUEST
-          ? { httpStatus, id: bookmark.id }
-          : null;
-      }),
-    );
-
-    const broken = results.filter(Boolean);
+    const broken = await findBrokenLinks(batch);
     if (broken.length) {
       await Promise.all(
         broken.map((r) => bookmarkStorage.updateHttpStatusById(r.id, r.httpStatus)),

@@ -1,10 +1,9 @@
 import { fetchUrl } from '@/services/httpClient';
 import BookmarkStorage from '@/storage/bookmark';
 import AttributeStorage from '@/storage/attribute';
-import MetadataParser, { isHeadWithPreview } from '@/parser/metadata';
-import { getBookmarksCount, getFoldersMap, getBookmarksIterator } from '@/services/browserBookmarks';
-import runWithHostLimit from '@/services/hostPool';
-import hashCode from '@/services/hash';
+import MetadataParser, { PAGE_FETCH_OPTIONS } from '@/parser/metadata';
+import { getBookmarksSnapshot } from '@/services/browserBookmarks';
+import runWithHostLimit, { hostOfUrl } from '@/services/hostPool';
 
 const MAX_CONCURRENT = 80;
 // Chrome opens at most 6 connections per host; more requests just queue and time out
@@ -12,11 +11,6 @@ const MAX_PER_HOST = 6;
 const BATCH_SIZE = 100;
 const PROGRESS_UPDATE_INTERVAL = 3000;
 const FETCH_TIMEOUT = 8000;
-const FETCH_OPTIONS = {
-  htmlOnly: true,
-  maxBytes: 512 * 1024,
-  isComplete: isHeadWithPreview,
-};
 
 const bookmarkStorage = new BookmarkStorage();
 const attributeStorage = new AttributeStorage();
@@ -27,86 +21,58 @@ const sendProgress = (progress, savedCount) => {
 };
 
 const fetchPageMetadata = async (bookmark, foldersMap) => {
-  const response = await fetchUrl(bookmark.url, FETCH_TIMEOUT, FETCH_OPTIONS);
+  const response = await fetchUrl(bookmark.url, FETCH_TIMEOUT, PAGE_FETCH_OPTIONS);
   return (new MetadataParser(bookmark, response, foldersMap)).getFavboxBookmark();
 };
 
-const hostOf = ({ url }) => {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return '';
-  }
-};
-
-const toAttribute = (key, { value, count }) => ({
-  key,
-  value: String(value).trim(),
-  id: hashCode(key, String(value).trim()),
-  count,
-});
-
-export const refreshAttributes = async () => {
+const refreshAttributes = async () => {
   console.time('refreshAttributes');
-
-  await attributeStorage.clear();
-
   const [domains, tags, keywords] = await Promise.all([
     bookmarkStorage.aggregateDomains(),
     bookmarkStorage.aggregateTags(),
     bookmarkStorage.aggregateKeywords(),
   ]);
-
-  const attributes = [
-    ...domains.map((r) => toAttribute('domain', r)),
-    ...tags.map((r) => toAttribute('tag', r)),
-    ...keywords.map((r) => toAttribute('keyword', r)),
-  ];
-
-  await attributeStorage.saveMany(attributes);
+  // aggregates first, so the table is empty only between clear and insert
+  await attributeStorage.refreshFromAggregated(domains, tags, keywords, true);
   console.timeEnd('refreshAttributes');
 };
 
 const sync = async () => {
   console.time('Sync time');
 
-  const [browserTotal, idbTotal, { status }] = await Promise.all([
-    getBookmarksCount(),
-    bookmarkStorage.total(),
+  const [{ bookmarks, folders: foldersMap }, storedIds, { status }] = await Promise.all([
+    getBookmarksSnapshot(),
+    bookmarkStorage.getAllIds(),
     browser.storage.session.get('status'),
   ]);
 
-  await browser.storage.session.set({ browserTotal, idbTotal });
-  console.log(`Browser: ${browserTotal}, IDB: ${idbTotal}, Status: ${status}`);
+  // Diff ids instead of totals: an add plus a delete leaves the totals equal.
+  // Both lists come from the same moment, so bookmarks that onCreated stores
+  // while this sync runs are never treated as outdated.
+  const browserIds = new Set(bookmarks.map((bookmark) => bookmark.id));
+  const existingIds = new Set(storedIds);
+  const bookmarksToProcess = bookmarks
+    .filter((bookmark) => !existingIds.has(bookmark.id))
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  const outdatedIds = storedIds.filter((id) => !browserIds.has(id));
 
-  if (browserTotal === idbTotal || status) {
+  await browser.storage.session.set({ browserTotal: bookmarks.length, idbTotal: storedIds.length });
+  console.log(`Browser: ${bookmarks.length}, IDB: ${storedIds.length}, Status: ${status}`);
+
+  if ((bookmarksToProcess.length === 0 && outdatedIds.length === 0) || status) {
     await browser.storage.session.set({ status: true });
     console.log('Already in sync');
     return;
   }
 
   await browser.storage.session.set({ status: false });
-  const [foldersMap, existingIds] = await Promise.all([
-    getFoldersMap(),
-    bookmarkStorage.getAllIds().then((ids) => new Set(ids)),
-  ]);
 
-  const browserIds = new Set();
   const batch = [];
   let processed = 0;
   let savedCount = 0;
   let lastProgressUpdate = Date.now();
 
-  const bookmarksToProcess = [];
-  for await (const bookmark of getBookmarksIterator()) {
-    browserIds.add(bookmark.id);
-    if (!existingIds.has(bookmark.id)) {
-      bookmarksToProcess.push(bookmark);
-    }
-  }
-  bookmarksToProcess.sort((a, b) => String(a.id).localeCompare(String(b.id)));
-
-  console.log(`To process: ${bookmarksToProcess.length}`);
+  console.log(`To process: ${bookmarksToProcess.length}, outdated: ${outdatedIds.length}`);
 
   const saveBatch = async () => {
     // splice synchronously so concurrent workers never save the same items twice
@@ -143,15 +109,13 @@ const sync = async () => {
   await runWithHostLimit(bookmarksToProcess, handleBookmark, {
     concurrency: MAX_CONCURRENT,
     perHost: MAX_PER_HOST,
-    hostOf,
+    hostOf: ({ url }) => hostOfUrl(url),
   });
   await saveBatch();
 
-  const idbIds = await bookmarkStorage.getAllIds();
-  const toDelete = idbIds.filter((id) => !browserIds.has(id));
-  if (toDelete.length > 0) {
-    console.log(`Removing ${toDelete.length} outdated bookmarks`);
-    await bookmarkStorage.removeByIds(toDelete);
+  if (outdatedIds.length > 0) {
+    console.log(`Removing ${outdatedIds.length} outdated bookmarks`);
+    await bookmarkStorage.removeByIds(outdatedIds);
   }
 
   await refreshAttributes();

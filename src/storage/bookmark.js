@@ -1,4 +1,5 @@
-import useConnection from './idb/connection';
+import useConnection, { DB_NAME } from './idb/connection';
+import readAllKeys from './idb/keys';
 import escapeRegExp from './regex';
 
 const buildTermRegex = (term) => {
@@ -380,12 +381,9 @@ export default class BookmarkStorage {
   }
 
   async getAllIds() {
-    const connection = await useConnection();
-    const response = await connection.select({
-      from: 'bookmarks',
-      columns: ['id'],
-    });
-    return response.map((i) => i.id);
+    // make sure JsStore has created the database before reading it natively
+    await useConnection();
+    return readAllKeys(DB_NAME, 'bookmarks');
   }
 
   async getDuplicatesGrouped(skip = 0, limit = 50) {

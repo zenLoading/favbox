@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import runWithHostLimit from '@/services/hostPool';
+import runWithHostLimit, { hostOfUrl } from '@/services/hostPool';
 
 const hostOf = (item) => item.host;
 
@@ -93,5 +93,16 @@ describe('runWithHostLimit', () => {
   it('rejects invalid limits', () => {
     expect(() => runWithHostLimit([], vi.fn(), { concurrency: 0, perHost: 1, hostOf })).toThrow();
     expect(() => runWithHostLimit([], vi.fn(), { concurrency: 1, perHost: 0, hostOf })).toThrow();
+  });
+});
+
+describe('hostOfUrl', () => {
+  it('returns the hostname of a url', () => {
+    expect(hostOfUrl('https://www.github.com:8080/a?b=c')).toBe('www.github.com');
+  });
+
+  it('returns an empty string for invalid urls', () => {
+    expect(hostOfUrl('not a url')).toBe('');
+    expect(hostOfUrl(undefined)).toBe('');
   });
 });

@@ -1,25 +1,4 @@
 /**
- * Counts the total number of bookmarks.
- * @returns {Promise<number>}
- */
-export async function getBookmarksCount() {
-  const tree = await browser.bookmarks.getTree();
-  let count = 0;
-  const countBookmarks = (nodes) => {
-    nodes.forEach((node) => {
-      if (node.url) {
-        count += 1;
-      }
-      if (node.children) {
-        countBookmarks(node.children);
-      }
-    });
-  };
-  countBookmarks(tree);
-  return count;
-}
-
-/**
  * Recursively collects all bookmarks from the given node.
  * @param {object} node - The bookmark node.
  * @returns {Array<{id: string, url: string}>}
@@ -63,24 +42,25 @@ export async function getFolderTree() {
 }
 
 /**
- * Retrieves all browser bookmarks.
- * @yields {browser.bookmarks.BookmarkTreeNode}
+ * Reads the bookmark tree once and returns all bookmarks and folders.
+ * @returns {Promise<{bookmarks: Array<browser.bookmarks.BookmarkTreeNode>, folders: Map<string, string>}>}
  */
-export async function* getBookmarksIterator() {
-  const bookmarksTree = await browser.bookmarks.getTree();
-  function* processNode(node) {
-    if (node.url) {
-      yield node;
-    }
-    if (node.children) {
-      for (const child of node.children) {
-        yield* processNode(child);
+export async function getBookmarksSnapshot() {
+  const bookmarks = [];
+  const folders = new Map();
+  const traverse = (nodes) => {
+    for (const node of nodes) {
+      if (node.url) {
+        bookmarks.push(node);
+      }
+      if (node.children) {
+        folders.set(node.id, node.title);
+        traverse(node.children);
       }
     }
-  }
-  for (const rootNode of bookmarksTree) {
-    yield* processNode(rootNode);
-  }
+  };
+  traverse(await browser.bookmarks.getTree());
+  return { bookmarks, folders };
 }
 
 /**
