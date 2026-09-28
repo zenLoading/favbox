@@ -87,7 +87,8 @@
 
 1. 对 URL 做规范化后作为主键：去掉末尾的 `/`、去掉 `#` 片段、主机名转小写。查询参数保留，因为它常常决定页面内容。
 2. 同一 URL 只有一个候选时，直接匹配。
-3. 同一 URL 有多个候选时，按以下顺序比较：文件夹路径和标题都相同 → 标题相同 → 按 `dateAdded` 最接近的；已被匹配过的候选不再参与。
+3. 同一 URL 有多个候选时，按以下顺序比较：文件夹路径和标题都相同 → 标题相同 → 按 `dateAdded` 最接近的；已被匹配过的候选不再参与。标题比较时去掉 `🏷 #标签` 部分；文件夹路径**不含根文件夹**（见 4.2）。
+   匹配分轮进行：先为所有条目找"路径和标题都相同"的，再找"标题相同"的，最后按时间，避免排在前面的条目用弱匹配抢走后面条目的精确匹配。
 4. 匹配不到的条目归入"缺失，可重建"。
 
 ### 3.2 恢复时要避免触发大量网页抓取
@@ -118,7 +119,7 @@
 | 文件 | 内容 | 类型 |
 |---|---|---|
 | `src/backup/format.js` | 格式常量、`buildBackup(tree, entities, settings, options)` | 纯函数 |
-| `src/backup/validate.js` | `validateBackup(json)` → `{ backup, errors, skipped }` | 纯函数 |
+| `src/backup/validate.js` | `readBackup(text)` / `validateBackup(value)` → `{ backup, error, skipped, droppedFields }`；致命问题只返回错误码（`ERROR.*`），单条跳过带原因码（`SKIP.*`），界面负责把码映射成文字 | 纯函数 |
 | `src/backup/match.js` | `normalizeUrl`、`matchBookmarks(backupEntries, currentEntries)` | 纯函数 |
 | `src/backup/plan.js` | `planRestore(backup, currentTree, options)` → `{ updates, creates, skipped }` | 纯函数 |
 | `src/backup/netscape.js` | `toNetscapeHtml(tree, entities)`，包含 HTML 转义 | 纯函数 |
@@ -170,7 +171,7 @@
 - 按树形保存，可以完整还原文件夹层级；扩展数据直接挂在对应书签节点上，不需要另外维护 id 映射。
 - **不保存书签 id**：换了设备 id 没有意义，还容易被误用。
 - 标签不单独存：它们本来就在 `title` 里，由 `extractTags` 解析。
-- 根节点（书签栏、其他书签等）的名字随浏览器和语言不同。恢复时按位置对应：第 1 个根对应书签栏，第 2 个对应其他书签，依此类推；对应不上就放进恢复文件夹。
+- 根文件夹（书签栏、其他书签等）的名字随浏览器和语言不同，顺序也不同（Chrome：书签栏、其他书签、移动设备；Firefox：菜单、工具栏、其他书签、移动设备），所以**不能按位置对应**。匹配时文件夹路径只比较根文件夹以下的部分；重建时根文件夹名作为恢复文件夹下的第一层，例如 `FavBox restore 2026-09-28/Bookmarks bar/Dev`。
 - 以后格式变化时 `version` 递增，`validate.js` 负责把旧版本升级到新版本。
 
 ### 4.3 导出流程
@@ -233,7 +234,7 @@ HTML 导出时，`title`、`url`、笔记全部做 HTML 转义，避免生成的
 | `format.spec.js` | 数据挂接正确；不含截图时只删 `data:` 图片；数据库里没有记录的书签照常导出 |
 | `validate.spec.js` | 恶意用例：`javascript:` 地址、超长字段、深度嵌套、错误版本、非 JSON、`notes` 为对象、`__proto__` 键 |
 | `match.spec.js` | URL 规范化；同一 URL 多个候选时按优先级匹配；已匹配的候选不重复使用 |
-| `plan.spec.js` | 更新、重建、跳过的分类；根节点按位置对应 |
+| `plan.spec.js` | 更新与重建的分类；笔记追加合并、空笔记（`<p></p>`）识别、重复恢复无变化（幂等）；缺数据库记录的书签带上备份数据 |
 | `netscape.spec.js` | 转义正确；层级正确；`TAGS` 与 `<DD>` 输出 |
 | `apply.spec.js` | 恢复期间 `nativeImport` 为 true，出错后也会复原；**恢复前后原有书签不变**；恢复期间 `fetch` 未被调用 |
 | 往返测试 | 导出 → 清空 → 导入，数据完全一致 |
