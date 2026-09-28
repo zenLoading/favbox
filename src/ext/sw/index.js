@@ -5,6 +5,7 @@ import { fetchUrl } from '@/services/httpClient';
 import { extractTitle, extractTags } from '@/services/tags';
 import { getFoldersMap, getBookmarksFromNode } from '@/services/browserBookmarks';
 import findActiveTabByUrl from '@/services/browserTabs';
+import rebuildAttributes from '@/services/attributes';
 import sync from './sync';
 import ping from './ping';
 
@@ -195,12 +196,7 @@ browser.bookmarks.onRemoved.addListener(async (id, removeInfo) => {
       if (bookmarksToRemove.length) {
         await bookmarkStorage.removeByIds(bookmarksToRemove);
         // Full refresh after folder deletion
-        const [domains, tags, keywords] = await Promise.all([
-          bookmarkStorage.aggregateDomains(),
-          bookmarkStorage.aggregateTags(),
-          bookmarkStorage.aggregateKeywords(),
-        ]);
-        await attributeStorage.refreshFromAggregated(domains, tags, keywords, true);
+        await rebuildAttributes(bookmarkStorage, attributeStorage);
         console.log('🗑️ Folder has been removed..', bookmarksToRemove.length, id, removeInfo);
       }
       refreshUserInterface();

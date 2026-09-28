@@ -49,10 +49,13 @@ export function flattenBrowserTree(tree, rows) {
 
 /**
  * Works out which fields to restore. Never overwrites: notes are appended,
- * pins are only added, images only fill a gap.
+ * pins are only added, images only fill a gap. Also used when applying,
+ * against the row as it is at that moment.
+ * @param {object} backupData
+ * @param {object|null} row - Stored row, or null when there is none.
  * @returns {{changes: object, mergedNotes: boolean}}
  */
-const restoreChanges = (backupData, row) => {
+export const restoreChanges = (backupData, row) => {
   const changes = {};
   let mergedNotes = false;
   if (hasNotes(backupData.notes)) {

@@ -4,6 +4,7 @@ import AttributeStorage from '@/storage/attribute';
 import MetadataParser, { PAGE_FETCH_OPTIONS } from '@/parser/metadata';
 import { getBookmarksSnapshot } from '@/services/browserBookmarks';
 import runWithHostLimit, { hostOfUrl } from '@/services/hostPool';
+import rebuildAttributes from '@/services/attributes';
 
 const MAX_CONCURRENT = 80;
 // Chrome opens at most 6 connections per host; more requests just queue and time out
@@ -23,18 +24,6 @@ const sendProgress = (progress, savedCount) => {
 const fetchPageMetadata = async (bookmark, foldersMap) => {
   const response = await fetchUrl(bookmark.url, FETCH_TIMEOUT, PAGE_FETCH_OPTIONS);
   return (new MetadataParser(bookmark, response, foldersMap)).getFavboxBookmark();
-};
-
-const refreshAttributes = async () => {
-  console.time('refreshAttributes');
-  const [domains, tags, keywords] = await Promise.all([
-    bookmarkStorage.aggregateDomains(),
-    bookmarkStorage.aggregateTags(),
-    bookmarkStorage.aggregateKeywords(),
-  ]);
-  // aggregates first, so the table is empty only between clear and insert
-  await attributeStorage.refreshFromAggregated(domains, tags, keywords, true);
-  console.timeEnd('refreshAttributes');
 };
 
 const sync = async () => {
@@ -118,7 +107,7 @@ const sync = async () => {
     await bookmarkStorage.removeByIds(outdatedIds);
   }
 
-  await refreshAttributes();
+  await rebuildAttributes(bookmarkStorage, attributeStorage);
   await browser.storage.session.set({ status: true });
   sendProgress(100, savedCount);
 
