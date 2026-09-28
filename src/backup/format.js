@@ -103,14 +103,26 @@ export function summarizeBackup(backup) {
 
 const pad = (value) => String(value).padStart(2, '0');
 
+// e.g. 20260928-0905 (local time)
+const fileStamp = (date) => {
+  const day = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+  return `${day}-${pad(date.getHours())}${pad(date.getMinutes())}`;
+};
+
 /**
  * @param {Date} date
- * @returns {string} e.g. favbox-backup-20260928-0905.json (local time)
+ * @returns {string} e.g. favbox-backup-20260928-0905.json
  */
 export function backupFileName(date) {
-  const day = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
-  const time = `${pad(date.getHours())}${pad(date.getMinutes())}`;
-  return `${BACKUP_FORMAT}-${day}-${time}.json`;
+  return `${BACKUP_FORMAT}-${fileStamp(date)}.json`;
+}
+
+/**
+ * @param {Date} date
+ * @returns {string} e.g. favbox-bookmarks-20260928-0905.html
+ */
+export function bookmarksFileName(date) {
+  return `favbox-bookmarks-${fileStamp(date)}.html`;
 }
 
 /**
@@ -121,4 +133,30 @@ export function detectBrowser(userAgent) {
   if (/Firefox\//.test(userAgent)) return 'firefox';
   if (/Edg\//.test(userAgent)) return 'edge';
   return 'chrome';
+}
+
+/**
+ * Size of the captured screenshots (data URLs) a backup would include.
+ * @param {Array<object>} rows - Stored bookmark rows.
+ * @returns {number} Approximate size in bytes.
+ */
+export function estimateScreenshotBytes(rows) {
+  return rows.reduce((sum, row) => sum + (isScreenshot(row.image) ? row.image.length : 0), 0);
+}
+
+const BYTE_UNITS = ['KB', 'MB', 'GB'];
+
+/**
+ * @param {number} bytes
+ * @returns {string} e.g. "900 B", "4.2 MB"
+ */
+export function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(1)} ${BYTE_UNITS[unit]}`;
 }

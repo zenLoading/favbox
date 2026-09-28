@@ -14,6 +14,7 @@
       </Suspense>
     </main>
     <AppNotifications />
+    <BackupReminder />
   </div>
 </template>
 
@@ -22,6 +23,7 @@ import { onErrorCaptured } from 'vue';
 import { notify } from 'notiwind';
 import AppNotifications from '@/components/app/AppNotifications.vue';
 import ASide from '@/ext/browser/components/ASide.vue';
+import BackupReminder from '@/ext/browser/components/BackupReminder.vue';
 import '@/composables/useAppSettings';
 import ClarityBookmarkLine from '~icons/clarity/bookmark-line';
 import ClarityCopyLine from '~icons/clarity/copy-line';

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import browser from 'webextension-polyfill';
 import downloadText from '@/backup/download';
-import exportBackup from '@/backup/export';
+import exportBackup, { exportHtml } from '@/backup/export';
 
 const mocks = vi.hoisted(() => ({
   findAll: vi.fn(),
@@ -93,6 +93,31 @@ describe('exportBackup', () => {
 
     await expect(exportBackup()).rejects.toThrow('IDB closed');
     expect(downloadText).not.toHaveBeenCalled();
+    expect(browser.storage.local.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('exportHtml', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(browser.bookmarks.getTree).mockResolvedValue(tree);
+    mocks.findAll.mockResolvedValue([{ id: '10', notes: '<p>n</p>', image: 'data:image/jpeg;base64,AAAA' }]);
+  });
+
+  it('downloads the bookmarks as a Netscape HTML file', async () => {
+    await exportHtml({ now: new Date(2026, 8, 28, 9, 5) });
+
+    const [content, fileName, type] = vi.mocked(downloadText).mock.calls[0];
+    expect(fileName).toBe('favbox-bookmarks-20260928-0905.html');
+    expect(type).toBe('text/html');
+    expect(content).toContain('<A HREF="https://a.com/"');
+    expect(content).toContain('<DD>n');
+    expect(content).not.toContain('data:image');
+  });
+
+  it('does not count as a backup', async () => {
+    await exportHtml();
+
     expect(browser.storage.local.set).not.toHaveBeenCalled();
   });
 });

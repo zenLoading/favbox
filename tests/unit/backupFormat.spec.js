@@ -4,7 +4,10 @@ import {
   BACKUP_VERSION,
   buildBackup,
   backupFileName,
+  bookmarksFileName,
   detectBrowser,
+  estimateScreenshotBytes,
+  formatBytes,
   summarizeBackup,
 } from '@/backup/format';
 
@@ -213,6 +216,12 @@ describe('backupFileName', () => {
   });
 });
 
+describe('bookmarksFileName', () => {
+  it('names the HTML export after the local date and time', () => {
+    expect(bookmarksFileName(new Date(2026, 8, 28, 9, 5))).toBe('favbox-bookmarks-20260928-0905.html');
+  });
+});
+
 describe('detectBrowser', () => {
   it.each([
     ['Mozilla/5.0 (Macintosh) Gecko/20100101 Firefox/131.0', 'firefox'],
@@ -221,5 +230,31 @@ describe('detectBrowser', () => {
     ['', 'chrome'],
   ])('detects %s as %s', (userAgent, expected) => {
     expect(detectBrowser(userAgent)).toBe(expected);
+  });
+});
+
+describe('estimateScreenshotBytes', () => {
+  it('adds up the size of captured screenshots only', () => {
+    const rows = [
+      { image: 'data:image/jpeg;base64,AAAA' },
+      { image: 'https://site.com/og.png' },
+      { image: null },
+      {},
+      { image: 'data:image/png;base64,BBBBBBBB' },
+    ];
+
+    expect(estimateScreenshotBytes(rows)).toBe('data:image/jpeg;base64,AAAA'.length + 'data:image/png;base64,BBBBBBBB'.length);
+  });
+});
+
+describe('formatBytes', () => {
+  it.each([
+    [0, '0 B'],
+    [900, '900 B'],
+    [1536, '1.5 KB'],
+    [4.2 * 1024 * 1024, '4.2 MB'],
+    [3 * 1024 * 1024 * 1024, '3.0 GB'],
+  ])('%s -> %s', (bytes, expected) => {
+    expect(formatBytes(bytes)).toBe(expected);
   });
 });
