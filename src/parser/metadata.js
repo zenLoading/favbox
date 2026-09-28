@@ -1,6 +1,21 @@
 import { parseHTML } from 'linkedom';
 import { extractTitle, extractTags } from '@/services/tags';
 
+const HEAD_END = /<\/head\s*>/i;
+const HEAD_PREVIEW = /og:image|twitter:image|image_src/i;
+
+/**
+ * Tells whether a (partial) HTML document already holds everything the parser needs:
+ * a closed head with a preview image. Without one, the body is still needed
+ * to search for a preview image.
+ * @param {string} html
+ * @returns {boolean}
+ */
+export function isHeadWithPreview(html) {
+  const headEnd = HEAD_END.exec(html);
+  return headEnd !== null && HEAD_PREVIEW.test(html.slice(0, headEnd.index));
+}
+
 /**
  * Class for parsing bookmark metadata from HTML documents.
  */

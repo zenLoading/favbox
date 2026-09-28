@@ -1,13 +1,22 @@
 import { fetchUrl } from '@/services/httpClient';
 import BookmarkStorage from '@/storage/bookmark';
 import AttributeStorage from '@/storage/attribute';
-import MetadataParser from '@/parser/metadata';
+import MetadataParser, { isHeadWithPreview } from '@/parser/metadata';
 import { getBookmarksCount, getFoldersMap, getBookmarksIterator } from '@/services/browserBookmarks';
+import runWithHostLimit from '@/services/hostPool';
 import hashCode from '@/services/hash';
 
 const MAX_CONCURRENT = 80;
+// Chrome opens at most 6 connections per host; more requests just queue and time out
+const MAX_PER_HOST = 6;
 const BATCH_SIZE = 100;
 const PROGRESS_UPDATE_INTERVAL = 3000;
+const FETCH_TIMEOUT = 8000;
+const FETCH_OPTIONS = {
+  htmlOnly: true,
+  maxBytes: 512 * 1024,
+  isComplete: isHeadWithPreview,
+};
 
 const bookmarkStorage = new BookmarkStorage();
 const attributeStorage = new AttributeStorage();
@@ -18,8 +27,16 @@ const sendProgress = (progress, savedCount) => {
 };
 
 const fetchPageMetadata = async (bookmark, foldersMap) => {
-  const response = await fetchUrl(bookmark.url, 8000);
+  const response = await fetchUrl(bookmark.url, FETCH_TIMEOUT, FETCH_OPTIONS);
   return (new MetadataParser(bookmark, response, foldersMap)).getFavboxBookmark();
+};
+
+const hostOf = ({ url }) => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
 };
 
 const toAttribute = (key, { value, count }) => ({
@@ -91,48 +108,44 @@ const sync = async () => {
 
   console.log(`To process: ${bookmarksToProcess.length}`);
 
-  const active = new Set();
+  const saveBatch = async () => {
+    // splice synchronously so concurrent workers never save the same items twice
+    const itemsToSave = batch.splice(0);
+    if (itemsToSave.length === 0) return;
+    await bookmarkStorage.createMany(itemsToSave);
+    savedCount += itemsToSave.length;
+    console.log(`Saved batch: ${itemsToSave.length}, total: ${savedCount}`);
+  };
 
-  const handleBookmark = async (bookmark) => {
-    try {
-      const result = await fetchPageMetadata(bookmark, foldersMap);
-      batch.push(result);
-      processed++;
-      const now = Date.now();
-      if (now - lastProgressUpdate > PROGRESS_UPDATE_INTERVAL) {
-        const progress = Math.round((processed / bookmarksToProcess.length) * 100);
-        sendProgress(progress, savedCount);
-        lastProgressUpdate = now;
-      }
-    } catch (error) {
-      console.error(`Error processing ${bookmark.url}:`, error.message);
+  const reportProgress = () => {
+    const now = Date.now();
+    if (now - lastProgressUpdate > PROGRESS_UPDATE_INTERVAL) {
+      const progress = Math.round((processed / bookmarksToProcess.length) * 100);
+      sendProgress(progress, savedCount);
+      lastProgressUpdate = now;
     }
   };
 
-  for (const bookmark of bookmarksToProcess) {
-    const promise = handleBookmark(bookmark);
-
-    active.add(promise);
-    promise.finally(() => active.delete(promise));
-
-    if (active.size >= MAX_CONCURRENT) {
-      await Promise.race(active);
+  const handleBookmark = async (bookmark) => {
+    try {
+      batch.push(await fetchPageMetadata(bookmark, foldersMap));
+    } catch (error) {
+      console.error(`Error processing ${bookmark.url}:`, error.message);
+    } finally {
+      processed++;
+      reportProgress();
     }
-
     if (batch.length >= BATCH_SIZE) {
-      const itemsToSave = batch.splice(0, batch.length);
-      await bookmarkStorage.createMany(itemsToSave);
-      savedCount += itemsToSave.length;
-      console.log(`Saved batch: ${itemsToSave.length}, total: ${savedCount}`);
+      await saveBatch();
     }
-  }
+  };
 
-  await Promise.all(active);
-  if (batch.length > 0) {
-    await bookmarkStorage.createMany(batch);
-    savedCount += batch.length;
-    console.log(`Saved final batch: ${batch.length}, total: ${savedCount}`);
-  }
+  await runWithHostLimit(bookmarksToProcess, handleBookmark, {
+    concurrency: MAX_CONCURRENT,
+    perHost: MAX_PER_HOST,
+    hostOf,
+  });
+  await saveBatch();
 
   const idbIds = await bookmarkStorage.getAllIds();
   const toDelete = idbIds.filter((id) => !browserIds.has(id));

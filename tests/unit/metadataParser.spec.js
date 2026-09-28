@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import MetadataParser from '@/parser/metadata';
+import MetadataParser, { isHeadWithPreview } from '@/parser/metadata';
 
 describe('MetadataParser', () => {
   let mockBookmark;
@@ -380,6 +380,25 @@ describe('MetadataParser', () => {
     it('should handle empty HTML', () => {
       const parser = new MetadataParser({}, { html: '' });
       expect(parser).toBeInstanceOf(MetadataParser);
+    });
+  });
+
+  describe('isHeadWithPreview', () => {
+    it('is false until the head is closed', () => {
+      expect(isHeadWithPreview('<html><head><meta property="og:image" content="a.png">')).toBe(false);
+    });
+
+    it('is true when a closed head contains og:image', () => {
+      expect(isHeadWithPreview('<html><head><meta property="og:image" content="a.png"></head><body>')).toBe(true);
+    });
+
+    it('is true for twitter:image and image_src', () => {
+      expect(isHeadWithPreview('<head><meta name="twitter:image" content="a.png"></HEAD>')).toBe(true);
+      expect(isHeadWithPreview('<head><link rel="image_src" href="a.png"></head >')).toBe(true);
+    });
+
+    it('is false when the head has no preview image, so the body is still read', () => {
+      expect(isHeadWithPreview('<head><title>x</title></head><body><meta property="og:image">')).toBe(false);
     });
   });
 
